@@ -126,7 +126,7 @@ def _parse_date_col(col) -> Optional[pd.Timestamp]:
     return None
 
 
-def _to_numeric_val(val) -> float:
+def _to_numeric_val(val, preserve_on_fail: bool = False) -> float:
     """
     Convert a value to numeric, handling various formats and edge cases.
     
@@ -140,11 +140,14 @@ def _to_numeric_val(val) -> float:
     ----------
     val
         Value to convert.
+    preserve_on_fail : bool, default False
+        If True, return original value if conversion fails.
+        If False, return np.nan on conversion failure.
     
     Returns
     -------
-    float
-        Numeric value or np.nan if conversion fails.
+    float or original value
+        Numeric value, np.nan, or original value (if preserve_on_fail=True).
     """
 
     if val is None:
@@ -168,13 +171,13 @@ def _to_numeric_val(val) -> float:
     s = re.sub(r"[^\d.\-eE]", "", s)
 
     if s == "":
-        return np.nan
+        return val if preserve_on_fail else np.nan
 
     try:
         num = float(s)
         return -num if neg else num
     except:
-        return np.nan
+        return val if preserve_on_fail else np.nan
 
 
 def preprocess_table(
@@ -260,7 +263,7 @@ def preprocess_table(
         parsed = _parse_date_col(col)
 
         if parsed is not None:
-            date_map[col] = parsed
+            date_map[col] = parsed.strftime("%Y-%m-%d")
         else:
             date_map[col] = col
 
@@ -281,7 +284,7 @@ def preprocess_table(
             if col in ("metric", "metric_orig"):
                 continue
 
-            numeric_values[col] = _to_numeric_val(row.get(col))
+            numeric_values[col] = _to_numeric_val(row.get(col), preserve_on_fail=True)
 
         record = {
             "metric": metric,
@@ -338,7 +341,19 @@ def preprocess_table(
                 unit_map[metric] = ""
                 continue
 
-            median = np.median(np.abs(values))
+            # Filter to only numeric values (skip strings)
+            numeric_values = []
+            for v in values:
+                try:
+                    numeric_values.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+            
+            if len(numeric_values) == 0:
+                unit_map[metric] = ""
+                continue
+
+            median = np.median(np.abs(numeric_values))
 
             if scale_to == "crore" or (scale_to == "auto" and median >= 1e6):
 
@@ -544,6 +559,8 @@ def _save_processed_data(
     """
     Save processed DataFrames (wide and long formats) to data/processed/ folder.
     
+    Special case: meta.csv is copied as-is without processing.
+    
     Parameters
     ----------
     processed_results : Dict[str, Dict[str, pd.DataFrame]]
@@ -553,12 +570,13 @@ def _save_processed_data(
     -------
     Dict[str, Dict[str, Path]]
         Dictionary mapping table names to saved file paths:
-        {table_name: {'wide': path, 'long': path}}
+        {table_name: {'wide': path, 'long': path}} or {table_name: {'copy': path}} for meta
     
     Notes
     -----
     Creates data/processed/ directory if it doesn't exist.
     Logs save status for each file.
+    meta.csv is copied from raw without processing.
     """
     logger.debug(f"Preparing to save processed data to {DATA_PROCESSED_DIR}")
     
@@ -569,6 +587,16 @@ def _save_processed_data(
     
     for table_name, formats in processed_results.items():
         logger.debug(f"Saving processed data for table: {table_name}")
+        
+        # Special case: copy meta.csv as-is
+        if table_name == "meta":
+            from shutil import copy2
+            src = DATA_RAW_DIR / "meta.csv"
+            dst = DATA_PROCESSED_DIR / "meta.csv"
+            copy2(src, dst)
+            logger.info(f"Copied (not processed): meta → {dst}")
+            saved_paths[table_name] = {"copy": dst}
+            continue
         
         # Save wide format
         wide_path = DATA_PROCESSED_DIR / f"{table_name}_wide.csv"
