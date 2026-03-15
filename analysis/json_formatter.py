@@ -91,7 +91,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from trend_engine import TrendResult, RatioTrend, GrowthTrend
+from analysis.trend_engine import TrendResult, RatioTrend, GrowthTrend
 from constants import DATA_PROCESSED_DIR, LOGS_DIR
 
 

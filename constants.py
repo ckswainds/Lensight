@@ -4,7 +4,7 @@ Import these paths in any module to avoid hardcoding.
 """
 
 from pathlib import Path
-
+import os
 # ─────────────────────────────────────────────────────────────────
 # Project Root
 # ─────────────────────────────────────────────────────────────────
@@ -39,3 +39,7 @@ CSV_BALANCE_SHEET = DATA_RAW_DIR / "balance_sheet.csv"
 CSV_CASH_FLOW = DATA_RAW_DIR / "cash_flow.csv"
 CSV_QUARTERS = DATA_RAW_DIR / "quarters.csv"
 CSV_META = DATA_RAW_DIR / "meta.csv"
+
+DASHBOARD_HOST  = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+DASHBOARD_PORT  = int(os.getenv("DASHBOARD_PORT", "8050"))
+DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"

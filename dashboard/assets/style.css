@@ -1,1 +1,192 @@
-/* Lensight — Global Styles */
+/* ============================================================
+   Lensight Dashboard — dashboard/assets/style.css
+   Dash auto-loads any CSS from the assets/ folder.
+   ============================================================ */
+
+/* ── Page load fade-in ──────────────────────────────────── */
+body {
+    animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Spinner animation ──────────────────────────────────── */
+@keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ── Pulse animation for step dots ─────────────────────── */
+@keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.85); }
+    50%       { opacity: 1.0; transform: scale(1.15); }
+}
+
+/* ── Upload drop zone hover ─────────────────────────────── */
+.dcc-upload:hover {
+    background: #ccfbf1 !important;
+    border-color: #0d9488 !important;
+}
+
+/* ── New analysis button hover ──────────────────────────── */
+#btn-new-analysis:hover {
+    background: #0d9488 !important;
+    color: #ffffff !important;
+}
+
+/* ── Progress bar ───────────────────────────────────────── */
+.lensight-progress .progress,
+.lensight-progress {
+    background: rgba(255,255,255,0.08) !important;
+    border-radius: 3px !important;
+}
+.lensight-progress .progress-bar {
+    background: linear-gradient(90deg, #0d9488, #10b981) !important;
+    transition: width 0.5s ease !important;
+    border-radius: 3px !important;
+}
+
+/* ── PDF upload zone hover ──────────────────────────────── */
+#upload-pdf:hover > div {
+    background: #e0e7ff !important;
+}
+
+/* ── Card hover — lift + deeper shadow ──────────────────── */
+.lensight-card {
+    transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+    cursor: default;
+}
+.lensight-card:hover {
+    transform: translateY(-3px) !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.11) !important;
+}
+
+/* ── KPI value — teal on card hover ─────────────────────── */
+.kpi-value {
+    transition: color 0.15s ease;
+    display: inline-block;
+}
+.lensight-card:hover .kpi-value {
+    color: #0d9488 !important;
+}
+
+/* ── Section labels ─────────────────────────────────────── */
+.section-label {
+    transition: letter-spacing 0.2s ease;
+    display: inline-block;
+    cursor: default;
+}
+.section-label:hover {
+    letter-spacing: 0.18em !important;
+}
+
+/* ── Score pills ────────────────────────────────────────── */
+.score-pill {
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    cursor: default;
+    display: inline-block;
+}
+.score-pill:hover {
+    transform: scale(1.07);
+    opacity: 0.9;
+}
+
+/* ── Plotly modebar — fade in only on chart hover ───────── */
+.js-plotly-plot .modebar-container {
+    opacity: 0 !important;
+    transition: opacity 0.2s ease !important;
+}
+.js-plotly-plot:hover .modebar-container {
+    opacity: 1 !important;
+}
+
+/* ── Chart card hover ───────────────────────────────────── */
+.dash-graph {
+    transition: background 0.2s ease;
+    border-radius: 8px;
+}
+.dash-graph:hover {
+    background: rgba(13,148,136,0.015);
+}
+
+/* ── Responsive fixes ───────────────────────────────────── */
+.js-plotly-plot, .plot-container {
+    width: 100% !important;
+}
+.g-3 > * {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+}
+
+/* ── Upload page — animated background orbs ─────────────── */
+.bg-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    pointer-events: none;
+    animation: orbFloat 8s ease-in-out infinite;
+}
+.bg-orb-1 {
+    width: 400px; height: 400px;
+    background: rgba(13, 148, 136, 0.12);
+    top: -100px; left: -100px;
+    animation-delay: 0s;
+}
+.bg-orb-2 {
+    width: 300px; height: 300px;
+    background: rgba(99, 102, 241, 0.10);
+    bottom: -80px; right: -80px;
+    animation-delay: 3s;
+}
+.bg-orb-3 {
+    width: 200px; height: 200px;
+    background: rgba(16, 185, 129, 0.08);
+    top: 40%; left: 60%;
+    animation-delay: 5s;
+}
+@keyframes orbFloat {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33%       { transform: translate(20px, -20px) scale(1.05); }
+    66%       { transform: translate(-15px, 15px) scale(0.95); }
+}
+
+/* ── Upload page — brand fade-slide-up ──────────────────── */
+@keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Upload zones hover ──────────────────────────────────── */
+.upload-zone {
+    transition: background 0.2s ease, border-color 0.2s ease,
+                transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.upload-zone-xlsx:hover {
+    background: #ccfbf1 !important;
+    border-color: #059669 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(13,148,136,0.15);
+}
+.upload-zone-pdf:hover {
+    background: #e0e7ff !important;
+    border-color: #4f46e5 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(99,102,241,0.15);
+}
+
+/* ── Run Analysis button ─────────────────────────────────── */
+.btn-run {
+    transition: transform 0.18s ease, box-shadow 0.18s ease,
+                opacity 0.15s ease !important;
+}
+.btn-run:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(13,148,136,0.35) !important;
+    opacity: 0.95;
+}
+.btn-run:active {
+    transform: scale(0.98) !important;
+}

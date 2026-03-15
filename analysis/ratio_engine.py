@@ -272,11 +272,25 @@ class RatioEngine:
             self._cagr_windows,
         )
 
+        # Compute TTM from quarterly data
+        self._ttm_period, self._ttm_pnl = self._compute_ttm()
+
+        # Only use TTM if it goes beyond the latest annual period
+        if self._ttm_period and self._ttm_period > self._periods[-1]:
+            display_periods = self._periods + [self._ttm_period]
+            logger.info(
+                "TTM period '%s' extends beyond latest annual '%s' — appended.",
+                self._ttm_period, self._periods[-1],
+            )
+        else:
+            self._ttm_period = None
+            display_periods  = self._periods
+
         result = RatioResult(
             company=company,
             generated_at=datetime.now().isoformat(timespec="seconds"),
-            period_count=len(self._periods),
-            periods=self._periods,
+            period_count=len(display_periods),
+            periods=display_periods,
         )
 
         result.profitability = self._profitability()
@@ -315,9 +329,84 @@ class RatioEngine:
         self._periods    = self._detect_periods(self._pnl)
         self._meta_index = self._build_meta_index()
 
+        # Detect sector and fix unit mismatches before any ratio computation
+        self._is_bank = self._is_financial_company()
+        if self._is_bank:
+            self._fix_bank_unit_mismatch()
+
         logger.debug(
-            "Detected %d annual periods: %s", len(self._periods), self._periods
+            "Detected %d annual periods: %s | is_bank: %s",
+            len(self._periods), self._periods, self._is_bank,
         )
+
+    def _fix_bank_unit_mismatch(self) -> None:
+        """
+        Selectively correct BS rows that were over-scaled by the preprocessor.
+
+        Problem:
+          Screener.in exports all values in crores.
+          The preprocessor auto-scales any metric whose median > 1e6 by /1e7.
+          For large banks: certain BS line items (borrowings, total, etc.) have
+          values like 1,400,000 crores → median = 1,400,000 > 1e6 → ÷1e7 → 0.14.
+          P&L values (net_profit ~18,000 Cr) have median < 1e6 → unchanged.
+          Result: ROA = 18,000 / 0.14 * 100 = 12,857,142% (nonsense).
+
+          But NOT all BS rows are mis-scaled: equity_share_capital (5,807 Cr),
+          reserves (82,000 Cr) are fine — only the very large rows were affected.
+
+        Fix:
+          For each BS row, check if median of period values < 5.0.
+          Values representing crores should always be > 5 (at least 5 crores).
+          If median < 5.0 the row was over-divided — multiply back by 1e7.
+          Exclude: no_of_equity_shares, face_value, new_bonus_shares (counts).
+        """
+        try:
+            periods = self._detect_periods(self._bs)
+            if not periods:
+                return
+
+            # Metrics that are counts/ratios — don't apply unit correction
+            skip_metrics = {
+                "no_of_equity_shares", "new_bonus_shares",
+                "face_value", "dividend_payout",
+            }
+
+            corrected = []
+            for metric in self._bs.index:
+                if metric in skip_metrics:
+                    continue
+                vals = [
+                    self._get(self._bs, metric, p)
+                    for p in periods
+                ]
+                non_null = [v for v in vals if v is not None]
+                if not non_null:
+                    continue
+
+                import statistics
+                try:
+                    med = statistics.median(non_null)
+                except Exception:
+                    continue
+
+                # If median is suspiciously small (< 5 Cr) for a financial metric,
+                # it was over-scaled by the preprocessor
+                if 0 < abs(med) < 5.0:
+                    self._bs.loc[metric, periods] = (
+                        self._bs.loc[metric, periods] * 1e7
+                    )
+                    corrected.append(metric)
+
+            if corrected:
+                logger.warning(
+                    "Bank BS unit correction applied to %d metric(s): %s",
+                    len(corrected), corrected,
+                )
+            else:
+                logger.debug("No BS unit correction needed.")
+
+        except Exception as exc:
+            logger.warning("Could not apply BS unit correction: %s", exc)
 
     def _read_wide(self, filename: str) -> pd.DataFrame:
         """
@@ -631,11 +720,125 @@ class RatioEngine:
         dep  = self._series(self._pnl, "depreciation")
         return {p: self._r(self._add(ebit[p], dep[p])) for p in self._periods}
 
+    def _is_financial_company(self) -> bool:
+        """
+        Detect if this is a bank / NBFC / financial company.
+
+        Heuristic: average (other_liabilities / total_assets) > 0.65
+
+        Why NOT D/E ratio:
+          On Screener.in, banks report "Borrowings" as interbank/bond
+          borrowings only. Customer deposits sit in "Other Liabilities".
+          So Bank of Baroda shows D/E ~1.9x — below any reasonable
+          threshold — while BEL shows D/E ~0.004x.
+          The real signal is that Other Liabilities dominate total assets.
+
+        Calibration:
+          BEL  : other_liab/total ≈ 0.51  → not a bank ✓
+          BOB  : other_liab/total ≈ 0.82  → bank ✓
+          HDFC : other_liab/total ≈ 0.88  → bank ✓
+          NBFC : other_liab/total ≈ 0.70  → financial ✓
+        """
+        other_liab = self._series(self._bs, "other_liabilities")
+        total      = self._series(self._bs, "total")
+
+        ratios = []
+        for p in self._periods:
+            ol = other_liab.get(p)
+            t  = total.get(p)
+            if ol is not None and t and t > 0:
+                ratios.append(ol / t)
+
+        if not ratios:
+            return False
+
+        avg    = sum(ratios) / len(ratios)
+        is_fin = avg > 0.65
+
+        if is_fin:
+            logger.info(
+                "Financial company detected "
+                "(avg other_liabilities/total = %.2f > 0.65) "
+                "— ROCE set to None.",
+                avg,
+            )
+        else:
+            logger.debug(
+                "Not a financial company "
+                "(avg other_liabilities/total = %.2f <= 0.65).",
+                avg,
+            )
+        return is_fin
+
     def _capital_employed(self) -> dict[str, float | None]:
-        """Capital Employed = Total Assets - Other Liabilities (proxy for current liabilities)."""
+        """
+        Capital Employed = Total Assets - Other Liabilities.
+        Returns all-None for financial companies (banks/NBFCs).
+        """
+        if getattr(self, "_is_bank", False):
+            return {p: None for p in self._periods}
         total = self._series(self._bs, "total")
         curr  = self._series(self._bs, "other_liabilities")
         return {p: self._r(self._sub(total[p], curr[p])) for p in self._periods}
+
+    # ------------------------------------------------------------------
+    # TTM (Trailing Twelve Months) helpers
+    # ------------------------------------------------------------------
+
+    def _compute_ttm(self) -> tuple[str | None, dict[str, float | None]]:
+        """
+        Sum the last 4 quarters of P&L to produce a TTM (Trailing Twelve
+        Months) snapshot.
+
+        Returns
+        -------
+        (ttm_period, ttm_values)
+            ttm_period : YYYY-MM-DD string of the last quarter end, or None
+            ttm_values : {metric: summed_value} for P&L flow metrics
+        """
+        if self._qt.empty:
+            logger.debug("No quarterly data available — TTM skipped.")
+            return None, {}
+
+        qt_periods = self._detect_periods(self._qt)
+        if len(qt_periods) < 4:
+            logger.debug(
+                "Only %d quarter(s) available — need 4 for TTM.", len(qt_periods)
+            )
+            return None, {}
+
+        last_4     = qt_periods[-4:]
+        ttm_period = last_4[-1]
+
+        flow_metrics = [
+            "sales", "expenses", "operating_profit", "other_income",
+            "depreciation", "interest", "profit_before_tax",
+            "tax", "net_profit",
+        ]
+        ttm_values: dict[str, float | None] = {}
+        for metric in flow_metrics:
+            # Use _get() directly with quarterly period keys — NOT _series()
+            # because _series() iterates self._periods (annual dates only)
+            vals = [self._get(self._qt, metric, p) for p in last_4]
+            ttm_values[metric] = (
+                round(sum(float(v) for v in vals), 2)
+                if all(v is not None for v in vals)
+                else None
+            )
+
+        logger.info(
+            "TTM: quarters %s → %s | Sales=%.0f | Net Profit=%.0f",
+            last_4[0], last_4[-1],
+            ttm_values.get("sales") or 0,
+            ttm_values.get("net_profit") or 0,
+        )
+        return ttm_period, ttm_values
+
+    def _ttm_val(self, metric: str) -> float | None:
+        """Return the TTM value for a P&L flow metric."""
+        if not getattr(self, "_ttm_pnl", None):
+            return None
+        return self._ttm_pnl.get(metric)
 
     # ------------------------------------------------------------------
     # Ratio categories
@@ -659,7 +862,7 @@ class RatioEngine:
         equity   = self._equity()
         cap_emp  = self._capital_employed()
 
-        return {
+        out = {
             "net_profit_margin": self._period_ratio(net_prof, sales,   pct=True),
             "op_profit_margin":  self._period_ratio(ebit,     sales,   pct=True),
             "ebitda_margin":     self._period_ratio(ebitda,   sales,   pct=True),
@@ -667,6 +870,31 @@ class RatioEngine:
             "roce":              self._period_ratio(ebit,     cap_emp, pct=True),
             "roa":               self._period_ratio(net_prof, total,   pct=True),
         }
+
+        # ── TTM period ────────────────────────────────────────────────
+        if self._ttm_period:
+            tp          = self._ttm_period
+            latest      = self._periods[-1]
+            ttm_np      = self._ttm_val("net_profit")
+            ttm_sales   = self._ttm_val("sales")
+            ttm_op      = self._ttm_val("operating_profit")  # ≈ EBIT for TTM
+            ttm_dep     = self._ttm_val("depreciation")
+            ttm_ebitda  = self._r(self._add(ttm_op, ttm_dep))
+            # Stock metrics: use latest annual BS (no quarterly BS available)
+            ttm_equity  = equity.get(latest)
+            ttm_total   = total.get(latest)
+            ttm_cap     = cap_emp.get(latest)
+
+            out["net_profit_margin"][tp] = self._r(self._pct(ttm_np,     ttm_sales))
+            out["op_profit_margin"][tp]  = self._r(self._pct(ttm_op,     ttm_sales))
+            out["ebitda_margin"][tp]     = self._r(self._pct(ttm_ebitda, ttm_sales))
+            out["roe"][tp]               = self._r(self._pct(ttm_np,     ttm_equity))
+            out["roce"][tp]              = (
+                self._r(self._pct(ttm_op, ttm_cap)) if ttm_cap else None
+            )
+            out["roa"][tp]               = self._r(self._pct(ttm_np,     ttm_total))
+
+        return out
 
     def _valuation(self) -> dict[str, dict[str, float | None]]:
         """
@@ -699,47 +927,156 @@ class RatioEngine:
 
             out["pe_ratio"][p]        = self._r(self._div(price, eps))
             out["pb_ratio"][p]        = self._r(self._div(price, bvps))
-            out["ev_ebitda"][p]       = self._r(self._div(ev, ebitda.get(p)))
+            # EV/EBITDA not meaningful for banks (no EBITDA concept)
+            out["ev_ebitda"][p]       = (
+                None if getattr(self, "_is_bank", False)
+                else self._r(self._div(ev, ebitda.get(p)))
+            )
             out["mktcap_to_sales"][p] = self._r(self._div(mktcap, sales.get(p)))
+
+        # ── TTM valuation using current_price_inr ─────────────────────
+        # Screener only exports annual hist_price (March year-ends).
+        # For the TTM quarter we use current_price_inr from meta.
+        # BS values (equity, borrowings, cash) use latest annual since
+        # Screener does not export quarterly balance sheet data.
+        if self._ttm_period:
+            tp         = self._ttm_period
+            latest     = self._periods[-1]
+            cur_price  = self._meta_float("current_price_inr")
+            shares_ttm = self._adj_shares(latest)
+
+            if cur_price and shares_ttm:
+                ttm_np    = self._ttm_val("net_profit")
+                ttm_sales = self._ttm_val("sales")
+                ttm_op    = self._ttm_val("operating_profit")
+                ttm_dep   = self._ttm_val("depreciation")
+                ttm_ebitda_val = self._r(self._add(ttm_op, ttm_dep))
+                ttm_borr  = borr.get(latest)
+                ttm_cash  = cash.get(latest)
+
+                ttm_eps   = self._div(ttm_np,           shares_ttm)
+                ttm_bvps  = self._div(equity.get(latest), shares_ttm)
+                mktcap    = cur_price * shares_ttm
+                ev        = self._sub(self._add(mktcap, ttm_borr), ttm_cash)
+
+                out["pe_ratio"][tp]  = self._r(self._div(cur_price, ttm_eps))
+                out["pb_ratio"][tp]  = self._r(self._div(cur_price, ttm_bvps))
+                out["ev_ebitda"][tp] = (
+                    None if getattr(self, "_is_bank", False)
+                    else self._r(self._div(ev, ttm_ebitda_val))
+                )
+                out["mktcap_to_sales"][tp] = self._r(self._div(mktcap, ttm_sales))
+
+                logger.info(
+                    "TTM valuation: current_price=%.2f | TTM P/E=%.2f | TTM P/B=%.2f",
+                    cur_price,
+                    out["pe_ratio"].get(tp) or 0,
+                    out["pb_ratio"].get(tp) or 0,
+                )
+            else:
+                out["pe_ratio"][tp]        = None
+                out["pb_ratio"][tp]        = None
+                out["ev_ebitda"][tp]       = None
+                out["mktcap_to_sales"][tp] = None
 
         return out
 
     def _leverage(self) -> dict[str, dict[str, float | None]]:
         """
         debt_to_equity    : Borrowings / Equity
-        interest_coverage : EBIT / Interest
+        interest_coverage : EBIT / Interest  (None for banks — interest is core revenue cost)
         debt_to_assets    : Borrowings / Total Assets
+
+        For banks:
+          - debt_to_equity is misleading (deposits not in borrowings)
+          - interest_coverage is meaningless (interest IS the operating cost)
+          Both are set to None for financial companies.
         """
         logger.debug("Computing leverage ratios...")
-        return {
-            "debt_to_equity":    self._period_ratio(
-                self._series(self._bs, "borrowings"), self._equity()),
-            "interest_coverage": self._period_ratio(
-                self._ebit(), self._series(self._pnl, "interest")),
-            "debt_to_assets":    self._period_ratio(
-                self._series(self._bs, "borrowings"), self._series(self._bs, "total")),
+
+        _none = {p: None for p in self._periods}
+
+        if getattr(self, "_is_bank", False):
+            # For banks only debt_to_assets is retained (borrowings/total)
+            # as a proxy for leverage — but interest coverage and D/E are removed
+            return {
+                "debt_to_equity":    _none,
+                "interest_coverage": _none,
+                "debt_to_assets":    self._period_ratio(
+                    self._series(self._bs, "borrowings"),
+                    self._series(self._bs, "total"),
+                ),
+            }
+
+        borr  = self._series(self._bs, "borrowings")
+        total = self._series(self._bs, "total")
+        eqt   = self._equity()
+        ebit  = self._ebit()
+        intr  = self._series(self._pnl, "interest")
+
+        out = {
+            "debt_to_equity":    self._period_ratio(borr,  eqt),
+            "interest_coverage": self._period_ratio(ebit,  intr),
+            "debt_to_assets":    self._period_ratio(borr,  total),
         }
+
+        # TTM: BS uses latest annual (no quarterly BS); Interest uses TTM sum
+        if self._ttm_period:
+            tp     = self._ttm_period
+            latest = self._periods[-1]
+            ttm_b  = borr.get(latest)
+            ttm_e  = eqt.get(latest)
+            ttm_t  = total.get(latest)
+            ttm_int = self._ttm_val("interest")
+            # EBIT TTM = Operating Profit (quarterly)
+            ttm_op  = self._ttm_val("operating_profit")
+
+            out["debt_to_equity"][tp]    = self._r(self._div(ttm_b, ttm_e))
+            out["interest_coverage"][tp] = self._r(self._div(ttm_op, ttm_int))
+            out["debt_to_assets"][tp]    = self._r(self._div(ttm_b, ttm_t))
+
+        return out
 
     def _liquidity(self) -> dict[str, dict[str, float | None]]:
         """
         cash_ratio : Cash & Bank / Other Liabilities
-                     (proxy — Screener.in does not split current liabilities)
+        TTM: uses latest annual BS (Screener does not export quarterly BS).
         """
         logger.debug("Computing liquidity ratios...")
-        return {
-            "cash_ratio": self._period_ratio(
-                self._series(self._bs, "cash_bank"),
-                self._series(self._bs, "other_liabilities"),
-            ),
-        }
+        cash = self._series(self._bs, "cash_bank")
+        curr = self._series(self._bs, "other_liabilities")
+        out  = {"cash_ratio": self._period_ratio(cash, curr)}
+
+        # TTM: repeat latest annual BS values (no quarterly BS data available)
+        if self._ttm_period:
+            tp = self._ttm_period
+            latest = self._periods[-1]
+            out["cash_ratio"][tp] = out["cash_ratio"].get(latest)
+
+        return out
 
     def _efficiency(self) -> dict[str, dict[str, float | None]]:
         """
         asset_turnover          : Sales / Total Assets
         inventory_turnover_days : (Inventory / Sales) x 365
         receivables_days        : (Receivables / Sales) x 365
+
+        All set to None for financial companies — banks have no inventory
+        or trade receivables, and asset turnover is meaningless for them
+        (revenue = interest income, assets = loans/securities).
         """
         logger.debug("Computing efficiency ratios...")
+
+        _none = {p: None for p in self._periods}
+
+        if getattr(self, "_is_bank", False):
+            logger.debug("Financial company — efficiency ratios set to None.")
+            return {
+                "asset_turnover":          _none,
+                "inventory_turnover_days": _none,
+                "receivables_days":        _none,
+            }
+
         sales = self._series(self._pnl, "sales")
         total = self._series(self._bs,  "total")
         inv   = self._series(self._bs,  "inventory")
@@ -758,11 +1095,32 @@ class RatioEngine:
                 if (rec.get(p) is not None and s is not None) else None
             )
 
-        return {
+        out = {
             "asset_turnover":          self._period_ratio(sales, total),
             "inventory_turnover_days": inv_days,
             "receivables_days":        rec_days,
         }
+
+        # TTM: use TTM sales with latest annual BS for asset/inventory/receivables
+        if self._ttm_period:
+            tp         = self._ttm_period
+            latest     = self._periods[-1]
+            ttm_sales  = self._ttm_val("sales")
+            ttm_total  = total.get(latest)
+            ttm_inv    = inv.get(latest)
+            ttm_rec    = rec.get(latest)
+
+            out["asset_turnover"][tp] = self._r(self._div(ttm_sales, ttm_total))
+            out["inventory_turnover_days"][tp] = self._r(
+                self._div(ttm_inv, ttm_sales) * 365
+                if (ttm_inv is not None and ttm_sales) else None
+            )
+            out["receivables_days"][tp] = self._r(
+                self._div(ttm_rec, ttm_sales) * 365
+                if (ttm_rec is not None and ttm_sales) else None
+            )
+
+        return out
 
     def _growth(self) -> dict[str, float | None]:
         """
@@ -829,6 +1187,17 @@ class RatioEngine:
             eps[p]  = self._r(self._div(net_prof.get(p), shares))
             bvps[p] = self._r(self._div(equity.get(p),   shares))
             dps[p]  = self._r(self._div(dividend.get(p), shares))
+
+        # ── TTM EPS ───────────────────────────────────────────────────
+        if self._ttm_period:
+            tp         = self._ttm_period
+            latest     = self._periods[-1]
+            ttm_np     = self._ttm_val("net_profit")
+            ttm_shares = self._adj_shares(latest)
+            eps[tp]    = self._r(self._div(ttm_np, ttm_shares)) if ttm_shares else None
+            # Book value unchanged (annual BS only); dividends declared annually
+            bvps[tp]   = bvps.get(latest)
+            dps[tp]    = None
 
         return {
             "eps":                  eps,
