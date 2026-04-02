@@ -14,15 +14,12 @@ requests>=2.31.0
 nltk>=3.8.1
 
 # --- AI, LLMs & Vector Store ---
-# Left unpinned so uv can resolve the complex LangChain/OpenAI matrix
-openai
 langchain
 langchain-community
 langchain-core
-langchain-openai
+langchain-google-genai
 sentence-transformers
 faiss-cpu
-tiktoken
 
 # --- Backend API & Validation ---
 fastapi>=0.104.1
