@@ -18,8 +18,8 @@ langchain
 langchain-community
 langchain-core
 langchain-google-genai
-sentence-transformers
-faiss-cpu
+chromadb
+huggingface-hub
 
 # --- Backend API & Validation ---
 fastapi>=0.104.1

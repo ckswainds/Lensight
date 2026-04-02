@@ -1,6 +1,6 @@
-"""Vector Store: interface for FAISS."""
+"""Vector Store: interface for ChromaDB."""
 
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
 from rag.embedder import Embedder
 
 class LensightVectorStore:
@@ -10,14 +10,14 @@ class LensightVectorStore:
 
     def build_from_documents(self, documents: list):
         """
-        Takes chunked Langchain documents and builds the FAISS index in-memory.
+        Takes chunked Langchain documents and builds the Chroma index in-memory.
         """
-        self.vector_store = FAISS.from_documents(
+        self.vector_store = Chroma.from_documents(
             documents=documents,
             embedding=self.embedder.get_embeddings_model()
         )
         return self.vector_store
         
     def get_store(self):
-        """Returns the built FAISS vector store."""
+        """Returns the built Chroma vector store."""
         return self.vector_store

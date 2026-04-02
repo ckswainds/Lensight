@@ -1,15 +1,14 @@
 """Embedder: text → vector conversion via embedding model."""
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from config import config
 
 class Embedder:
     def __init__(self):
-        # We load a local embedding model via sentence-transformers (free and fast)
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=config.EMBEDDING_MODEL,
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
+        # We load the cloud API embedding model (free cloud processing)
+        self.embeddings = HuggingFaceInferenceAPIEmbeddings(
+            api_key=config.HUGGINGFACEHUB_API_TOKEN,
+            model_name=config.EMBEDDING_MODEL
         )
         
     def get_embeddings_model(self):

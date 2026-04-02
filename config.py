@@ -17,8 +17,9 @@ class Config:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     
     # RAG Settings
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "faiss")
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
     RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
+    HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 config = Config()
