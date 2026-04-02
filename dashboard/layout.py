@@ -810,13 +810,34 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                                     if cat != "overall_score"
                                 ]),
 
+                                # Chat with AI button
+                                html.Button(
+                                    "✦  Chat with AI",
+                                    id="btn-open-chat",
+                                    n_clicks=0,
+                                    style={
+                                        "marginTop": "8px",
+                                        "marginRight": "8px",
+                                        "background": f"linear-gradient(135deg, {_ACCENT}, #6366f1)",
+                                        "border": "none",
+                                        "color": "#ffffff",
+                                        "borderRadius": "20px",
+                                        "padding": "6px 16px",
+                                        "fontSize": "12px",
+                                        "fontWeight": "700",
+                                        "cursor": "pointer",
+                                        "fontFamily": "'DM Sans', sans-serif",
+                                        "transition": "all 0.18s ease",
+                                        "letterSpacing": "0.04em",
+                                    },
+                                ),
                                 # New analysis button
                                 html.Button(
                                     "↑  New Analysis",
                                     id="btn-new-analysis",
                                     n_clicks=0,
                                     style={
-                                        "marginTop": "12px",
+                                        "marginTop": "8px",
                                         "background": "transparent",
                                         "border": f"1px solid {_ACCENT}",
                                         "color": _ACCENT,
@@ -884,6 +905,249 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                     "borderTop": f"1px solid {_BORDER}", "marginTop": "4px",
                 }),
             ]),
+        ],
+    )
+
+
+# ── Screen 4: Chat Interface ──────────────────────────────────────────────────
+
+def _chat_bubble(role: str, content: str) -> html.Div:
+    is_user = role == "user"
+    return html.Div(
+        style={
+            "display": "flex",
+            "justifyContent": "flex-end" if is_user else "flex-start",
+            "marginBottom": "12px",
+        },
+        children=[html.Div(
+            content,
+            style={
+                "maxWidth": "78%",
+                "padding": "10px 16px",
+                "borderRadius": "18px 18px 4px 18px" if is_user else "18px 18px 18px 4px",
+                "background": f"linear-gradient(135deg, {_ACCENT}, #10b981)" if is_user else "#f1f5f9",
+                "color": "#ffffff" if is_user else _TEXT_PRI,
+                "fontSize": "14px",
+                "fontWeight": "500",
+                "lineHeight": "1.55",
+                "fontFamily": "'DM Sans', sans-serif",
+                "boxShadow": "0 1px 4px rgba(0,0,0,0.1)",
+                "whiteSpace": "pre-wrap",
+            },
+        )]
+    )
+
+
+def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) -> html.Div:
+    """Full chat interface screen with stock context panel."""
+    messages = messages or []
+    company = data.get("company", "UNKNOWN")
+    periods = data.get("periods", [])
+    scores = data.get("summary_scores", {})
+    period_range = f"FY{periods[0][:4]} – FY{periods[-1][:4]}" if len(periods) >= 2 else ""
+
+    # Key ratios summary from analysis data
+    ratios = data.get("ratios", {})
+    kpi_rows = []
+    for label, key in [
+        ("ROCE", "roce"), ("Debt / Equity", "debt_to_equity"),
+        ("Current Ratio", "current_ratio"), ("PAT Margin", "pat_margin"),
+        ("P/E Ratio", "pe_ratio"),
+    ]:
+        val = ratios.get(key, {}).get("values", [])
+        latest = f"{val[-1]:.2f}" if val else "—"
+        kpi_rows.append(html.Tr([
+            html.Td(label, style={"color": _TEXT_MUT, "fontSize": "12px", "padding": "4px 0"}),
+            html.Td(latest, style={"fontWeight": "700", "color": _TEXT_PRI, "fontSize": "12px",
+                                   "textAlign": "right", "padding": "4px 0"}),
+        ]))
+
+    return html.Div(
+        style={"display": "flex", "height": "100vh", "background": _PAGE_BG,
+               "fontFamily": "'DM Sans', system-ui, sans-serif", "overflow": "hidden"},
+        children=[
+
+            # ── Left: Context Panel ───────────────────────────────────────
+            html.Div(
+                style={
+                    "width": "280px", "minWidth": "280px",
+                    "background": _NAVY, "padding": "24px 20px",
+                    "display": "flex", "flexDirection": "column",
+                    "borderRight": f"3px solid {_ACCENT}",
+                    "overflowY": "auto",
+                },
+                children=[
+                    _header_logo(),
+                    html.Div(style={"height": "20px"}),
+                    html.H2(company, style={
+                        "color": "#f8fafc", "fontFamily": _FONT,
+                        "fontSize": "18px", "fontWeight": "900",
+                        "margin": "0 0 4px 0",
+                    }),
+                    html.P(period_range, style={
+                        "color": "#64748b", "fontSize": "12px", "margin": "0 0 16px 0",
+                    }),
+
+                    # Score card
+                    html.Div(style={
+                        "background": f"rgba(13,148,136,0.12)",
+                        "borderRadius": "10px",
+                        "padding": "12px 14px",
+                        "marginBottom": "16px",
+                        "border": f"1px solid {_ACCENT}44",
+                    }, children=[
+                        html.Div("OVERALL SCORE", style={
+                            "fontSize": "9px", "fontWeight": "800",
+                            "letterSpacing": "0.2em", "color": "#64748b",
+                        }),
+                        html.Div([
+                            html.Span(f"{scores.get('overall_score', 0):.1f}", style={
+                                "fontSize": "40px", "fontWeight": "900",
+                                "color": _ACCENT, "fontFamily": _FONT,
+                            }),
+                            html.Span("/5", style={
+                                "fontSize": "16px", "color": "#475569", "fontWeight": "700",
+                            }),
+                        ]),
+                    ]),
+
+                    # Ratios mini-table
+                    html.Div("KEY RATIOS", style={
+                        "fontSize": "9px", "fontWeight": "800",
+                        "letterSpacing": "0.2em", "color": "#64748b",
+                        "marginBottom": "8px",
+                    }),
+                    html.Table(html.Tbody(kpi_rows), style={"width": "100%", "marginBottom": "20px"}),
+
+                    # PDF badge
+                    html.Div(
+                        "📄 Annual report indexed" if has_pdf else "⚠ No annual report",
+                        style={
+                            "fontSize": "11px", "fontWeight": "700",
+                            "color": "#10b981" if has_pdf else "#f59e0b",
+                            "background": "#10b98120" if has_pdf else "#f59e0b20",
+                            "padding": "6px 12px", "borderRadius": "20px",
+                            "marginBottom": "16px",
+                        },
+                    ),
+
+                    # Back button
+                    html.Button(
+                        "← Back to Dashboard",
+                        id="btn-back-to-dashboard",
+                        n_clicks=0,
+                        style={
+                            "background": "transparent",
+                            "border": f"1px solid {_ACCENT}",
+                            "color": _ACCENT, "borderRadius": "20px",
+                            "padding": "8px 16px", "fontSize": "12px",
+                            "fontWeight": "700", "cursor": "pointer",
+                            "letterSpacing": "0.04em", "marginTop": "auto",
+                            "width": "100%",
+                        },
+                    ),
+                ],
+            ),
+
+            # ── Right: Chat Panel ─────────────────────────────────────────
+            html.Div(
+                style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                children=[
+
+                    # Chat header
+                    html.Div(
+                        style={
+                            "padding": "16px 24px",
+                            "background": "#ffffff",
+                            "borderBottom": f"1px solid {_BORDER}",
+                            "display": "flex", "alignItems": "center", "gap": "10px",
+                        },
+                        children=[
+                            html.Div("✦", style={"color": _ACCENT, "fontSize": "20px"}),
+                            html.Div([
+                                html.P("Chat with AI Analyst", style={
+                                    "margin": "0", "fontWeight": "800",
+                                    "color": _TEXT_PRI, "fontSize": "16px",
+                                }),
+                                html.P("Powered by Gemini 2.5 Flash · Grounded in your financial data",
+                                       style={"margin": "0", "color": _TEXT_MUT, "fontSize": "11px"}),
+                            ]),
+                            html.Span(
+                                "No annual report uploaded — answering from ratios only" if not has_pdf else "",
+                                style={
+                                    "marginLeft": "auto", "fontSize": "11px",
+                                    "background": "#f59e0b20", "color": "#f59e0b",
+                                    "padding": "4px 12px", "borderRadius": "12px",
+                                    "fontWeight": "700",
+                                    "display": "" if not has_pdf else "none",
+                                }
+                            ),
+                        ],
+                    ),
+
+                    # Messages area
+                    html.Div(
+                        id="chat-messages",
+                        style={
+                            "flex": "1", "overflowY": "auto",
+                            "padding": "20px 24px", "display": "flex",
+                            "flexDirection": "column",
+                        },
+                        children=[
+                            _chat_bubble(m["role"], m["content"]) for m in messages
+                        ] if messages else [
+                            html.Div(
+                                style={"textAlign": "center", "marginTop": "60px"},
+                                children=[
+                                    html.Div("✦", style={"fontSize": "36px", "color": _ACCENT, "marginBottom": "12px"}),
+                                    html.P(f"Ask me anything about {company}", style={
+                                        "color": _TEXT_MUT, "fontSize": "15px", "fontWeight": "600",
+                                    }),
+                                    html.P("e.g. 'What is the ROCE trend?' or 'What does management say about growth?'",
+                                           style={"color": "#94a3b8", "fontSize": "13px"}),
+                                ]
+                            )
+                        ],
+                    ),
+
+                    # Input area
+                    html.Div(
+                        style={
+                            "padding": "14px 24px",
+                            "background": "#ffffff",
+                            "borderTop": f"1px solid {_BORDER}",
+                            "display": "flex", "gap": "10px", "alignItems": "flex-end",
+                        },
+                        children=[
+                            dcc.Textarea(
+                                id="chat-input",
+                                placeholder="Ask a question about the stock...",
+                                style={
+                                    "flex": "1", "resize": "none", "height": "52px",
+                                    "border": f"1.5px solid {_BORDER}",
+                                    "borderRadius": "12px", "padding": "12px 14px",
+                                    "fontSize": "14px", "fontFamily": "'DM Sans', sans-serif",
+                                    "outline": "none", "lineHeight": "1.4",
+                                },
+                            ),
+                            html.Button(
+                                "Send →",
+                                id="btn-send-chat",
+                                n_clicks=0,
+                                style={
+                                    "padding": "12px 20px",
+                                    "background": f"linear-gradient(135deg, {_ACCENT}, #10b981)",
+                                    "border": "none", "borderRadius": "12px",
+                                    "color": "#ffffff", "fontWeight": "800",
+                                    "fontSize": "13px", "cursor": "pointer",
+                                    "fontFamily": "'DM Sans', sans-serif",
+                                    "height": "52px", "transition": "all 0.18s ease",
+                                },
+                            ),
+                        ],
+                    ),
+                ],
+            ),
         ],
     )
 

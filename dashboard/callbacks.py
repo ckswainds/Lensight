@@ -85,6 +85,7 @@ def register_callbacks(app) -> None:
         build_loading_screen,
         build_layout,
         build_error_layout,
+        build_chat_screen,
     )
 
     logger.info("Registering callbacks...")
@@ -289,5 +290,133 @@ def register_callbacks(app) -> None:
             raise PreventUpdate
         logger.info("User reset to upload screen.")
         return build_upload_screen(), {"screen": "upload"}, True
+
+    # ── 4. Navigate to Chat screen ────────────────────────────────────────────
+    @app.callback(
+        Output("page-content",  "children",  allow_duplicate=True),
+        Output("app-state",     "data",      allow_duplicate=True),
+        Input("btn-open-chat",  "n_clicks"),
+        State("chat-history",   "data"),
+        prevent_initial_call=True,
+    )
+    def cb_open_chat(n_clicks, chat_history):
+        if not n_clicks:
+            raise PreventUpdate
+        analysis_file = DATA_PROCESSED_DIR / "analysis.json"
+        if not analysis_file.exists():
+            raise PreventUpdate
+        with analysis_file.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        from dashboard.pipeline_runner import get_rag_store
+        has_pdf = get_rag_store() is not None
+        logger.info("Opening chat screen. has_pdf=%s, existing messages=%d", has_pdf, len(chat_history or []))
+        return (
+            build_chat_screen(data, has_pdf=has_pdf, messages=chat_history or []),
+            {"screen": "chat"},
+        )
+
+    # ── 5. Send chat message ──────────────────────────────────────────────────
+    @app.callback(
+        Output("chat-messages",  "children",  allow_duplicate=True),
+        Output("chat-history",   "data",      allow_duplicate=True),
+        Output("conv-summary",   "data",      allow_duplicate=True),
+        Output("chat-input",     "value",     allow_duplicate=True),
+        Input("btn-send-chat",   "n_clicks"),
+        State("chat-input",      "value"),
+        State("chat-history",    "data"),
+        State("conv-summary",    "data"),
+        prevent_initial_call=True,
+    )
+    def cb_send_message(n_clicks, question, chat_history, conv_summary):
+        if not n_clicks or not question or not question.strip():
+            raise PreventUpdate
+
+        question = question.strip()
+        chat_history = chat_history or []
+
+        # Load analysis data for ratios summary
+        analysis_file = DATA_PROCESSED_DIR / "analysis.json"
+        if not analysis_file.exists():
+            raise PreventUpdate
+        with analysis_file.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        company = data.get("company", "Unknown")
+
+        # Build a compact financial summary string from ratios
+        ratios = data.get("ratios", {})
+        ratio_lines = []
+        for key, info in list(ratios.items())[:15]:  # cap to first 15 ratios
+            vals = info.get("values", [])
+            periods = info.get("periods", [])
+            if vals:
+                latest = f"{vals[-1]:.2f}" if isinstance(vals[-1], float) else str(vals[-1])
+                ratio_lines.append(f"{key}: {latest} (latest period {periods[-1] if periods else ''})")
+        financial_summary = "\n".join(ratio_lines) if ratio_lines else "No ratio data available."
+
+        # Retrieve RAG context if PDF was indexed
+        rag_context = ""
+        from dashboard.pipeline_runner import get_rag_store
+        rag_store_instance = get_rag_store()
+        if rag_store_instance:
+            try:
+                from rag.retriever import RAGRetriever
+                retriever = RAGRetriever(rag_store_instance)
+                rag_context = retriever.retrieve_context(question)
+            except Exception as exc:
+                logger.warning("RAG retrieval failed: %s", exc)
+
+        # Call grounded LLM
+        from llm.orchestrator import LLMOrchestrator
+        orchestrator = LLMOrchestrator()
+
+        # Memory compression: if too many messages, compress older ones
+        conv_summary = conv_summary or ""
+        if len(chat_history) > 10:
+            chat_history, new_summary = orchestrator.maybe_compress(chat_history)
+            # Merge summaries
+            if conv_summary:
+                conv_summary = f"{conv_summary}\n\n{new_summary}"
+            else:
+                conv_summary = new_summary
+            logger.info("Chat history compressed. Summary updated.")
+
+        response = orchestrator.chat_grounded(
+            question=question,
+            company=company,
+            financial_summary=financial_summary,
+            rag_context=rag_context,
+            conversation_summary=conv_summary,
+        )
+
+        # Append to history
+        chat_history = chat_history + [
+            {"role": "user",      "content": question},
+            {"role": "assistant", "content": response},
+        ]
+
+        # Rebuild message bubbles for the UI
+        from dashboard.layout import _chat_bubble
+        message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
+
+        return message_bubbles, chat_history, conv_summary, ""
+
+    # ── 6. Back to Dashboard ──────────────────────────────────────────────────
+    @app.callback(
+        Output("page-content",       "children",  allow_duplicate=True),
+        Output("app-state",          "data",      allow_duplicate=True),
+        Input("btn-back-to-dashboard","n_clicks"),
+        prevent_initial_call=True,
+    )
+    def cb_back_to_dashboard(n_clicks):
+        if not n_clicks:
+            raise PreventUpdate
+        analysis_file = DATA_PROCESSED_DIR / "analysis.json"
+        if not analysis_file.exists():
+            raise PreventUpdate
+        with analysis_file.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        logger.info("Returning to dashboard from chat.")
+        return build_layout(data), {"screen": "dashboard"}
 
     logger.info("All callbacks registered.")

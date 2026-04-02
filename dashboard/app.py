@@ -95,6 +95,10 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
         # App-level state store
         dcc.Store(id="app-state", data={"screen": initial_screen}),
 
+        # Chat memory stores — persisted across dashboard ↔ chat navigation
+        dcc.Store(id="chat-history", data=[]),
+        dcc.Store(id="conv-summary", data=""),
+
         # Polling interval — disabled by default, enabled during processing
         dcc.Interval(
             id="poll-interval",

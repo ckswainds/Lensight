@@ -50,21 +50,23 @@ class Stage(str, Enum):
     RATIOS      = "ratios"
     TRENDS      = "trends"
     FORMATTING  = "formatting"
+    RAG_INDEXING = "rag_indexing"
     DONE        = "done"
     ERROR       = "error"
 
 
 # Human-readable label + progress % per stage
 _STAGE_META: dict[Stage, tuple[str, int]] = {
-    Stage.IDLE:       ("Waiting for upload",          0),
-    Stage.FLUSHING:   ("Clearing previous data...",  10),
-    Stage.PARSING:    ("Parsing Excel file...",       25),
-    Stage.PROCESSING: ("Cleaning & normalising...",   42),
-    Stage.RATIOS:     ("Computing financial ratios...",58),
-    Stage.TRENDS:     ("Analysing trends...",          74),
-    Stage.FORMATTING: ("Building analysis output...", 88),
-    Stage.DONE:       ("Analysis complete!",          100),
-    Stage.ERROR:      ("Pipeline failed",               0),
+    Stage.IDLE:         ("Waiting for upload",             0),
+    Stage.FLUSHING:     ("Clearing previous data...",     10),
+    Stage.PARSING:      ("Parsing Excel file...",          25),
+    Stage.PROCESSING:   ("Cleaning & normalising...",      42),
+    Stage.RATIOS:       ("Computing financial ratios...",  58),
+    Stage.TRENDS:       ("Analysing trends...",            74),
+    Stage.FORMATTING:   ("Building analysis output...",    84),
+    Stage.RAG_INDEXING: ("Indexing annual report PDF...",  93),
+    Stage.DONE:         ("Analysis complete!",            100),
+    Stage.ERROR:        ("Pipeline failed",                 0),
 }
 
 
@@ -111,11 +113,17 @@ class PipelineStatus:
 
 _status  = PipelineStatus()
 _running = threading.Lock()   # prevents concurrent runs
+_rag_store = None             # holds the built ChromaDB vector store
 
 
 def get_status() -> dict[str, Any]:
     """Return current pipeline status as a plain dict (safe to store in dcc.Store)."""
     return _status.to_dict()
+
+
+def get_rag_store():
+    """Return the built RAG vector store (or None if no PDF was indexed)."""
+    return _rag_store
 
 
 def is_idle() -> bool:
@@ -248,6 +256,28 @@ def run_pipeline(
         from analysis.json_formatter import JsonFormatter
         JsonFormatter(processed_dir).build(trend_result)
         logger.info("analysis.json written.")
+
+        # ── Stage: RAG_INDEXING ──────────────────────────────────
+        _status.update(Stage.RAG_INDEXING)
+        global _rag_store
+        _rag_store = None   # reset from prior session
+        try:
+            pdf_files = list(uploads_dir.glob("*.pdf"))
+            if pdf_files:
+                pdf_path = pdf_files[0]
+                logger.info("Indexing PDF for RAG: %s", pdf_path.name)
+                from ingestion.unstructured_loader import UnstructuredLoader
+                from rag.vector_store import LensightVectorStore
+                chunks = UnstructuredLoader().load_pdf(str(pdf_path))
+                vs = LensightVectorStore()
+                vs.build_from_documents(chunks)
+                _rag_store = vs
+                logger.info("RAG index built: %d chunks.", len(chunks))
+            else:
+                logger.info("No PDF found — skipping RAG indexing.")
+        except Exception as rag_exc:
+            # RAG failure is non-fatal — log and continue
+            logger.warning("RAG indexing failed (non-fatal): %s", rag_exc)
 
         # ── DONE ─────────────────────────────────────────────────
         _status.update(Stage.DONE)
