@@ -55,3 +55,4 @@ python-jose[cryptography]>=3.3.0
 
 yfinance
 urllib3
+google-generativeai
