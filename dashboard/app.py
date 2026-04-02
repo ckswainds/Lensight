@@ -98,6 +98,16 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
         # Chat memory stores — persisted across dashboard ↔ chat navigation
         dcc.Store(id="chat-history", data=[]),
         dcc.Store(id="conv-summary", data=""),
+        dcc.Store(id="pending-chat-request", data=None),  # Stores pending LLM request data
+        dcc.Store(id="streaming-response", data=None),  # Stores streaming response data
+
+        # Streaming interval — polls for new tokens
+        dcc.Interval(
+            id="stream-interval",
+            interval=100,  # Poll every 100ms
+            n_intervals=0,
+            disabled=True,
+        ),
 
         # Polling interval — disabled by default, enabled during processing
         dcc.Interval(

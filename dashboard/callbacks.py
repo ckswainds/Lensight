@@ -34,12 +34,17 @@ import base64
 import json
 import logging
 import sys
+import threading
 from pathlib import Path
+from queue import Queue
 
 from dash import Input, Output, State, callback_context, no_update
 from dash.exceptions import PreventUpdate
 
 logger = logging.getLogger(__name__)
+
+# Global stream queue for streaming responses
+_STREAM_QUEUE = Queue()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +84,7 @@ def register_callbacks(app) -> None:
         sys.path.insert(0, str(root))
 
     from constants import DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR
-    from dashboard.pipeline_runner import start_pipeline, get_status, Stage
+    from dashboard.pipeline_runner import start_pipeline, get_status, Stage, RAGStatus
     from dashboard.layout import (
         build_upload_screen,
         build_loading_screen,
@@ -307,110 +312,340 @@ def register_callbacks(app) -> None:
             raise PreventUpdate
         with analysis_file.open(encoding="utf-8") as fh:
             data = json.load(fh)
-        from dashboard.pipeline_runner import get_rag_store
-        has_pdf = get_rag_store() is not None
-        logger.info("Opening chat screen. has_pdf=%s, existing messages=%d", has_pdf, len(chat_history or []))
+        from dashboard.pipeline_runner import get_rag_store, get_status
+        status = get_status()
+        rag_status = status.get("rag_status", "idle")
+        logger.info("Opening chat screen. rag_status=%s, existing messages=%d", rag_status, len(chat_history or []))
         return (
-            build_chat_screen(data, has_pdf=has_pdf, messages=chat_history or []),
+            build_chat_screen(data, messages=chat_history or []),
             {"screen": "chat"},
         )
 
-    # ── 5. Send chat message ──────────────────────────────────────────────────
+    # ── 5. Update RAG Badge ──────────────────────────────────────────────────
     @app.callback(
-        Output("chat-messages",  "children",  allow_duplicate=True),
-        Output("chat-history",   "data",      allow_duplicate=True),
-        Output("conv-summary",   "data",      allow_duplicate=True),
-        Output("chat-input",     "value",     allow_duplicate=True),
-        Input("btn-send-chat",   "n_clicks"),
-        State("chat-input",      "value"),
-        State("chat-history",    "data"),
-        State("conv-summary",    "data"),
+        Output("rag-status-badge", "children"),
+        Output("rag-status-badge", "style"),
+        Output("rag-status-interval", "disabled"),
+        Input("rag-status-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def cb_update_rag_status(n_intervals):
+        from dashboard.pipeline_runner import get_status, RAGStatus
+        status = get_status()
+        rag_status = status.get("rag_status", RAGStatus.IDLE.value)
+
+        # Base style
+        base_style = {
+            "fontSize": "11px", "fontWeight": "700",
+            "padding": "6px 12px", "borderRadius": "20px",
+            "marginBottom": "16px", "textAlign": "center",
+            "transition": "all 0.3s ease",
+        }
+
+        if rag_status == RAGStatus.READY.value:
+            return "📄 Analysis Ready", {**base_style, "color": "#10b981", "background": "#10b98120"}, True
+        elif rag_status == RAGStatus.INDEXING.value:
+            # Pulsing effect via color change or just static text for now
+            return "⏳ Indexing PDF...", {**base_style, "color": "#12aada", "background": "#12aada20"}, False
+        elif rag_status == RAGStatus.ERROR.value:
+            return "⚠ Indexing Failed", {**base_style, "color": "#ef4444", "background": "#ef444420"}, True
+        else:
+            return "📊 Financials Only", {**base_style, "color": "#64748b", "background": "#f1f5f9"}, False
+
+    # ── 6a. Send chat message (optimistic UI update) ───────────────────────
+    @app.callback(
+        Output("chat-messages",        "children",  allow_duplicate=True),
+        Output("chat-input",           "value",     allow_duplicate=True),
+        Output("pending-chat-request", "data",      allow_duplicate=True),
+        Input("btn-send-chat",         "n_clicks"),
+        State("chat-input",            "value"),
+        State("chat-history",          "data"),
+        State("conv-summary",          "data"),
         prevent_initial_call=True,
     )
-    def cb_send_message(n_clicks, question, chat_history, conv_summary):
+    def cb_send_message_optimistic(n_clicks, question, chat_history, conv_summary):
+        """Show user message + loading bubble, store request for streaming."""
         if not n_clicks or not question or not question.strip():
+            logger.debug("[SEND] Send triggered but no valid question provided")
             raise PreventUpdate
 
         question = question.strip()
         chat_history = chat_history or []
 
-        # Load analysis data for ratios summary
-        analysis_file = DATA_PROCESSED_DIR / "analysis.json"
-        if not analysis_file.exists():
-            raise PreventUpdate
-        with analysis_file.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+        logger.info(f"[SEND] User message: {question[:60]}...")
+        logger.debug(f"[SEND] Chat history size: {len(chat_history)} messages")
 
-        company = data.get("company", "Unknown")
+        # Build message bubbles with user message + loading placeholder
+        from dashboard.layout import _chat_bubble, _loading_bubble
+        bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
+        bubbles.append(_chat_bubble("user", question))
+        # Add loading bubble that will be replaced with streaming response
+        bubbles.append(_loading_bubble())
 
-        # Build a compact financial summary string from ratios
-        ratios = data.get("ratios", {})
-        ratio_lines = []
-        for key, info in list(ratios.items())[:15]:  # cap to first 15 ratios
-            vals = info.get("values", [])
-            periods = info.get("periods", [])
-            if vals:
-                latest = f"{vals[-1]:.2f}" if isinstance(vals[-1], float) else str(vals[-1])
-                ratio_lines.append(f"{key}: {latest} (latest period {periods[-1] if periods else ''})")
-        financial_summary = "\n".join(ratio_lines) if ratio_lines else "No ratio data available."
+        # Store request data for next callback to process
+        request_data = {
+            "question": question,
+            "chat_history": chat_history,
+            "conv_summary": conv_summary,
+        }
 
-        # Retrieve RAG context if PDF was indexed
-        rag_context = ""
-        from dashboard.pipeline_runner import get_rag_store
-        rag_store_instance = get_rag_store()
-        if rag_store_instance:
-            try:
-                from rag.retriever import RAGRetriever
-                retriever = RAGRetriever(rag_store_instance)
-                rag_context = retriever.retrieve_context(question)
-            except Exception as exc:
-                logger.warning("RAG retrieval failed: %s", exc)
+        logger.info("[SEND] Optimistic UI update complete, streaming scheduled")
+        return bubbles, "", request_data
 
-        # Call grounded LLM
-        from llm.orchestrator import LLMOrchestrator
-        orchestrator = LLMOrchestrator()
-
-        # Memory compression: if too many messages, compress older ones
-        conv_summary = conv_summary or ""
-        if len(chat_history) > 10:
-            chat_history, new_summary = orchestrator.maybe_compress(chat_history)
-            # Merge summaries
-            if conv_summary:
-                conv_summary = f"{conv_summary}\n\n{new_summary}"
-            else:
-                conv_summary = new_summary
-            logger.info("Chat history compressed. Summary updated.")
-
-        response = orchestrator.chat_grounded(
-            question=question,
-            company=company,
-            financial_summary=financial_summary,
-            rag_context=rag_context,
-            conversation_summary=conv_summary,
-        )
-
-        # Append to history
-        chat_history = chat_history + [
-            {"role": "user",      "content": question},
-            {"role": "assistant", "content": response},
-        ]
-
-        # Rebuild message bubbles for the UI
-        from dashboard.layout import _chat_bubble
-        message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
-
-        return message_bubbles, chat_history, conv_summary, ""
-
-    # ── 6. Back to Dashboard ──────────────────────────────────────────────────
+    # ── 6b. Start streaming LLM response ──────────────────────────────────
     @app.callback(
-        Output("page-content",       "children",  allow_duplicate=True),
-        Output("app-state",          "data",      allow_duplicate=True),
+        Output("stream-interval",      "disabled", allow_duplicate=True),
+        Output("streaming-response",   "data",     allow_duplicate=True),
+        Input("pending-chat-request",  "data"),
+        prevent_initial_call=True,
+    )
+    def cb_start_streaming(request_data):
+        """Start background thread to stream LLM response."""
+        if not request_data:
+            logger.debug("[START_STREAM] No pending request data")
+            raise PreventUpdate
+
+        logger.info("[START_STREAM] Initiating streaming response handler")
+
+        # Clear queue
+        cleared = 0
+        while not _STREAM_QUEUE.empty():
+            try:
+                _STREAM_QUEUE.get()
+                cleared += 1
+            except:
+                pass
+        logger.debug(f"[START_STREAM] Cleared {cleared} items from queue")
+
+        # Initialize streaming response store
+        streaming_data = {
+            "status": "streaming",
+            "response": "",
+            "request_data": request_data,
+        }
+
+        def _stream_worker():
+            """Background thread to stream LLM response."""
+            try:
+                question = request_data.get("question")
+                chat_history = request_data.get("chat_history", [])
+                conv_summary = request_data.get("conv_summary", "")
+
+                logger.info(f"[STREAM] Starting stream worker for question: {question[:60]}...")
+
+                # Load analysis
+                analysis_file = DATA_PROCESSED_DIR / "analysis.json"
+                if not analysis_file.exists():
+                    logger.error("[STREAM] Analysis file not found")
+                    _STREAM_QUEUE.put(("error", "Analysis file not found"))
+                    return
+
+                with analysis_file.open(encoding="utf-8") as fh:
+                    data = json.load(fh)
+
+                company = data.get("company", "Unknown")
+                financial_summary = json.dumps(data, indent=2)
+                logger.debug(f"[STREAM] Loaded analysis for {company}")
+
+                # Get RAG status
+                from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
+                status = get_status()
+                rag_status = status.get("rag_status", RAGStatus.IDLE.value)
+                
+                rag_context = ""
+                rag_store_instance = get_rag_store()
+                if rag_store_instance and rag_status == RAGStatus.READY.value:
+                    try:
+                        from rag.retriever import RAGRetriever
+                        retriever = RAGRetriever(rag_store_instance)
+                        rag_context = retriever.retrieve_context(question)
+                        logger.debug("[STREAM] RAG context retrieved successfully")
+                    except Exception as exc:
+                        logger.warning(f"[STREAM] RAG retrieval failed: {exc}")
+
+                # Compress if needed
+                conv_summary = conv_summary or ""
+                if len(chat_history) > 10:
+                    logger.info(f"[STREAM] Chat history has {len(chat_history)} messages, skipping compression to save quota")
+
+                # Stream LLM response
+                from llm.orchestrator import LLMOrchestrator
+                orchestrator = LLMOrchestrator()
+                logger.info("[STREAM] Starting LLM streaming...")
+
+                token_count = 0
+                for token in orchestrator.chat_grounded_stream(
+                    question=question,
+                    company=company,
+                    financial_summary=financial_summary,
+                    rag_context=rag_context,
+                    conversation_summary=conv_summary,
+                    rag_ready=(rag_status == RAGStatus.READY.value)
+                ):
+                    _STREAM_QUEUE.put(("token", token))
+                    token_count += 1
+
+                logger.info(f"[STREAM] LLM streaming complete. Total tokens: {token_count}")
+                _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+
+            except Exception as exc:
+                error_msg = str(exc)
+                logger.error(f"[STREAM] Streaming error occurred: {error_msg}", exc_info=True)
+                
+                # Check if it's a quota exceeded error (429)
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                    logger.error("[STREAM] QUOTA EXCEEDED: Gemini API free tier limit reached (20 requests/day)")
+                    _STREAM_QUEUE.put(("quota_exceeded", None))
+                else:
+                    _STREAM_QUEUE.put(("error", error_msg))
+
+        # Start background thread
+        thread = threading.Thread(target=_stream_worker, daemon=True)
+        thread.start()
+        logger.info("[START_STREAM] Background streaming thread started, polling enabled")
+
+        # Enable interval polling and return initial state
+        return False, streaming_data
+
+    # ── 6c. Poll streaming tokens and update UI ────────────────────────────
+    @app.callback(
+        Output("chat-messages",       "children",  allow_duplicate=True),
+        Output("stream-interval",     "disabled",  allow_duplicate=True),
+        Output("chat-history",        "data",      allow_duplicate=True),
+        Output("conv-summary",        "data",      allow_duplicate=True),
+        Output("streaming-response",  "data",      allow_duplicate=True),
+        Input("stream-interval",      "n_intervals"),
+        State("chat-history",         "data"),
+        State("streaming-response",   "data"),
+        prevent_initial_call=True,
+    )
+    def cb_poll_stream(n_intervals, chat_history, streaming_data):
+        """Poll for streamed tokens and update UI continuously."""
+        if not streaming_data or streaming_data.get("status") != "streaming":
+            raise PreventUpdate
+
+        # Collect ALL tokens from queue
+        while not _STREAM_QUEUE.empty():
+            try:
+                token_type, token_data = _STREAM_QUEUE.get_nowait()
+
+                if token_type == "token":
+                    streaming_data["response"] += token_data
+                    logger.debug(f"[POLL] Received token, response length: {len(streaming_data['response'])}")
+
+                elif token_type == "done":
+                    # Streaming complete - finalize
+                    final_response = streaming_data["response"]
+                    chat_history_new = token_data.get("chat_history", chat_history or [])
+                    conv_summary = token_data.get("conv_summary", "")
+                    question = streaming_data["request_data"].get("question", "")
+
+                    logger.info(f"[POLL] Streaming complete. Final response length: {len(final_response)}")
+
+                    # Save to history
+                    chat_history_final = chat_history_new + [
+                        {"role": "user", "content": question},
+                        {"role": "assistant", "content": final_response},
+                    ]
+
+                    # Rebuild all messages
+                    from dashboard.layout import _chat_bubble
+                    message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_final]
+
+                    logger.info(f"[POLL] Chat history saved with {len(chat_history_final)} messages")
+                    return (
+                        message_bubbles,
+                        True,  # Disable interval
+                        chat_history_final,
+                        conv_summary,
+                        None,  # Clear streaming data
+                    )
+
+                elif token_type == "quota_exceeded":
+                    # API quota limit exceeded
+                    logger.error("[POLL] API quota exceeded - user needs to wait for reset or upgrade")
+                    error_msg = "API quota exceeded. Please try again later."
+                    
+                    # Build messages with error
+                    chat_history_with_error = (chat_history or []) + [
+                        {"role": "user", "content": streaming_data["request_data"].get("question", "")},
+                        {"role": "assistant", "content": error_msg},
+                    ]
+                    
+                    from dashboard.layout import _chat_bubble
+                    message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_with_error]
+                    
+                    return (
+                        message_bubbles,
+                        True,  # Disable interval
+                        chat_history_with_error,
+                        no_update,
+                        None,  # Clear streaming data
+                    )
+
+                elif token_type == "error":
+                    # Generic error occurred
+                    logger.error(f"[POLL] Stream error: {token_data}")
+                    error_msg = "An error occurred. Please try again."
+                    
+                    # Build messages with error
+                    chat_history_with_error = (chat_history or []) + [
+                        {"role": "user", "content": streaming_data["request_data"].get("question", "")},
+                        {"role": "assistant", "content": error_msg},
+                    ]
+                    
+                    from dashboard.layout import _chat_bubble
+                    message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_with_error]
+                    
+                    return (
+                        message_bubbles,
+                        True,  # Disable interval
+                        chat_history_with_error,
+                        no_update,
+                        None,  # Clear streaming data
+                    )
+
+            except Exception as exc:
+                logger.warning(f"[POLL] Queue get error: {exc}", exc_info=True)
+                break
+
+        # ALWAYS update UI while streaming - show partial response as tokens arrive
+        from dashboard.layout import _chat_bubble, _loading_bubble
+        
+        # Rebuild messages with current partial response
+        chat_history = chat_history or []
+        message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
+        
+        # Add user message from pending request
+        question = streaming_data["request_data"].get("question", "")
+        message_bubbles.append(_chat_bubble("user", question))
+        
+        # Add response - show loading if empty, otherwise show partial response
+        if streaming_data["response"]:
+            message_bubbles.append(_chat_bubble("assistant", streaming_data["response"]))
+        else:
+            message_bubbles.append(_loading_bubble())
+
+        return message_bubbles, no_update, no_update, no_update, streaming_data
+
+    # ── 7. Back to Dashboard ──────────────────────────────────────────────────
+    @app.callback(
+        Output("page-content",        "children",  allow_duplicate=True),
+        Output("app-state",           "data",      allow_duplicate=True),
         Input("btn-back-to-dashboard","n_clicks"),
         prevent_initial_call=True,
     )
     def cb_back_to_dashboard(n_clicks):
         if not n_clicks:
             raise PreventUpdate
+        
+        # Clear streaming state
+        while not _STREAM_QUEUE.empty():
+            try:
+                _STREAM_QUEUE.get_nowait()
+            except:
+                pass
+        
         analysis_file = DATA_PROCESSED_DIR / "analysis.json"
         if not analysis_file.exists():
             raise PreventUpdate

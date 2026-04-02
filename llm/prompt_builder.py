@@ -13,15 +13,16 @@ STRICT RULES — follow them exactly:
 2. If neither source contains enough information, respond with EXACTLY:
    "I don't have enough information in the provided data to answer that reliably."
 3. Never fabricate numbers, ratios, dates, or management quotes.
-4. Be concise, professional, and cite which source you used (Ratios or Annual Report).
+4. Professional tone. If using info from the Annual Report context, you MUST cite the page number if available (e.g., "[Page 12]").
+5. REPORT AVAILABILITY: {report_status}
 
---- Prior Conversation Summary (if any) ---
+--- Prior Conversation Summary ---
 {conversation_summary}
 
 --- Financial Ratios & Trends ---
 {financial_summary}
 
---- Annual Report Context (retrieved, may be empty) ---
+--- Annual Report Context (retrieved chunks) ---
 {rag_context}"""
 
         human_template = "{question}"

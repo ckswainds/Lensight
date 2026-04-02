@@ -1,11 +1,14 @@
 """Orchestrator: manages LLM call flow and chaining."""
 
 import json
+import logging
 from llm.narrative_generator import NarrativeGenerator
 from llm.prompt_builder import PromptBuilder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.output_parsers import StrOutputParser
 from config import config
+
+logger = logging.getLogger(__name__)
 
 # Maximum number of messages before compressing history
 _MAX_MESSAGES = 10
@@ -13,6 +16,7 @@ _MAX_MESSAGES = 10
 
 class LLMOrchestrator:
     def __init__(self):
+        logger.info("[ORCHESTRATOR] Initializing LLMOrchestrator")
         self.generator = NarrativeGenerator()
 
         # Shared LLM for chat and summarization
@@ -21,6 +25,7 @@ class LLMOrchestrator:
             temperature=0.3,
             api_key=config.GEMINI_API_KEY
         )
+        logger.debug(f"[ORCHESTRATOR] LLM initialized with model: {config.LLM_MODEL}")
 
         # Grounded chat chain
         self.chat_prompt = PromptBuilder.build_grounded_chat_prompt()
@@ -29,6 +34,7 @@ class LLMOrchestrator:
         # Summarization chain (for memory compression)
         self.summarize_prompt = PromptBuilder.build_summarization_prompt()
         self.summarize_chain = self.summarize_prompt | self.chat_llm | StrOutputParser()
+        logger.info("[ORCHESTRATOR] LLMOrchestrator initialized successfully")
 
     def analyze_company(self, data: dict, rag_context: str = "") -> str:
         """Generate a full qualitative narrative report from financial data."""
@@ -56,29 +62,110 @@ class LLMOrchestrator:
         financial_summary: str,
         rag_context: str,
         conversation_summary: str = "",
+        rag_ready: bool = False,
     ) -> str:
         """
         Grounded chat using the strict system prompt.
         Uses computed ratios + RAG context. Refuses to fabricate.
         """
-        return self.chat_chain.invoke({
-            "company": company,
-            "conversation_summary": conversation_summary or "No prior conversation.",
-            "financial_summary": financial_summary,
-            "rag_context": rag_context if rag_context else "No annual report context available.",
-            "question": question,
-        })
+        logger.info(f"[CHAT] Starting chat_grounded for {company}. Question: {question[:50]}...")
+        logger.debug(f"[CHAT] RAG Ready: {rag_ready}, Summary length: {len(conversation_summary)}")
+        
+        report_status = (
+            "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
+            if rag_ready else
+            "Annual Report is STILL INDEXING. It is currently unavailable. Answer using ONLY the financial ratios provided. DO NOT try to answer PDF-specific questions yet, and disclose that the report is still processing if the user asks for it."
+        )
+
+        try:
+            response = self.chat_chain.invoke({
+                "company": company,
+                "conversation_summary": conversation_summary or "No prior conversation.",
+                "financial_summary": financial_summary,
+                "report_status": report_status,
+                "rag_context": rag_context if (rag_context and rag_ready) else "No context available (indexing in progress or no PDF).",
+                "question": question,
+            })
+            logger.info(f"[CHAT] Response generated successfully. Length: {len(response)} chars")
+        except Exception as e:
+            logger.error(f"[CHAT] Error during chat_grounded: {str(e)}", exc_info=True)
+            raise
+        
+        # Always add disclaimer when Annual Report is still indexing
+        if not rag_ready:
+            disclaimer = "\n\n---\n⏳ **Note:** Annual Report is still being indexed. This answer is based on financial ratios only. Qualitative insights from the report will be available once indexing completes."
+            response = response + disclaimer
+        
+        return response
+
+    def chat_grounded_stream(
+        self,
+        question: str,
+        company: str,
+        financial_summary: str,
+        rag_context: str,
+        conversation_summary: str = "",
+        rag_ready: bool = False,
+    ):
+        """
+        Streaming version of chat_grounded.
+        Yields tokens as they arrive from the LLM.
+        """
+        logger.info(f"[STREAM] Starting chat_grounded_stream for {company}. Question: {question[:50]}...")
+        logger.debug(f"[STREAM] RAG Ready: {rag_ready}, Conversation history length: {len(conversation_summary)}")
+        
+        report_status = (
+            "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
+            if rag_ready else
+            "Annual Report is STILL INDEXING. It is currently unavailable. Answer using ONLY the financial ratios provided. DO NOT try to answer PDF-specific questions yet, and disclose that the report is still processing if the user asks for it."
+        )
+
+        try:
+            # Stream tokens from LLM
+            full_response = ""
+            token_count = 0
+            for token in self.chat_chain.stream({
+                "company": company,
+                "conversation_summary": conversation_summary or "No prior conversation.",
+                "financial_summary": financial_summary,
+                "report_status": report_status,
+                "rag_context": rag_context if (rag_context and rag_ready) else "No context available (indexing in progress or no PDF).",
+                "question": question,
+            }):
+                full_response += token
+                token_count += 1
+                yield token
+            
+            logger.info(f"[STREAM] Streaming complete. Total tokens yielded: {token_count}")
+            
+        except Exception as e:
+            logger.error(f"[STREAM] Error during streaming: {str(e)}", exc_info=True)
+            raise
+        
+        # Yield disclaimer after main response
+        if not rag_ready:
+            disclaimer = "\n\n---\n⏳ **Note:** Annual Report is still being indexed. This answer is based on financial ratios only. Qualitative insights from the report will be available once indexing completes."
+            for token in disclaimer:
+                yield token
+            logger.debug("[STREAM] Disclaimer yielded")
 
     def compress_history(self, messages: list) -> str:
         """
         Takes a list of {"role": ..., "content": ...} dicts and
         returns a compressed summary string to use as conversation_summary.
         """
+        logger.info(f"[COMPRESS] Compressing {len(messages)} messages into summary")
         conversation_text = "\n".join(
             f"{m['role'].upper()}: {m['content']}"
             for m in messages
         )
-        return self.summarize_chain.invoke({"conversation_text": conversation_text})
+        try:
+            summary = self.summarize_chain.invoke({"conversation_text": conversation_text})
+            logger.info(f"[COMPRESS] Summary generated. Length: {len(summary)} chars")
+            return summary
+        except Exception as e:
+            logger.error(f"[COMPRESS] Error during compression: {str(e)}", exc_info=True)
+            raise
 
     def maybe_compress(self, messages: list) -> tuple[list, str]:
         """
@@ -86,11 +173,14 @@ class LLMOrchestrator:
         Returns (remaining_messages, summary_text).
         """
         if len(messages) <= _MAX_MESSAGES:
+            logger.debug(f"[COMPRESS] History has {len(messages)} messages (limit: {_MAX_MESSAGES}), no compression needed")
             return messages, ""
 
         # Compress the oldest half, keep the newest half live
         split = len(messages) // 2
         old_messages = messages[:split]
         new_messages = messages[split:]
+        logger.info(f"[COMPRESS] History exceeds limit ({len(messages)} > {_MAX_MESSAGES}). Compressing {split} old messages...")
         summary = self.compress_history(old_messages)
+        logger.info(f"[COMPRESS] Compression complete. Keeping {len(new_messages)} newest messages")
         return new_messages, summary

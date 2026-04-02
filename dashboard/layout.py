@@ -13,11 +13,18 @@ from typing import Any
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from charts import (
-    profitability_chart, margins_chart, valuation_chart,
-    eps_chart, growth_chart, efficiency_chart, leverage_chart,
-    score_radar_chart, trend_badge_table, get_kpi_data,
-)
+try:
+    from dashboard.charts import (
+        profitability_chart, margins_chart, valuation_chart,
+        eps_chart, growth_chart, efficiency_chart, leverage_chart,
+        score_radar_chart, trend_badge_table, get_kpi_data,
+    )
+except ImportError:
+    from charts import (
+        profitability_chart, margins_chart, valuation_chart,
+        eps_chart, growth_chart, efficiency_chart, leverage_chart,
+        score_radar_chart, trend_badge_table, get_kpi_data,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -938,6 +945,37 @@ def _chat_bubble(role: str, content: str) -> html.Div:
     )
 
 
+def _loading_bubble() -> html.Div:
+    """Loading animation bubble for LLM response."""
+    return html.Div(
+        style={
+            "display": "flex",
+            "justifyContent": "flex-start",
+            "marginBottom": "12px",
+        },
+        children=[html.Div(
+            [
+                html.Span("●", style={"animation": "pulse 0.8s infinite", "marginRight": "4px"}),
+                html.Span("Generating response...", style={"fontSize": "13px"}),
+            ],
+            style={
+                "maxWidth": "78%",
+                "padding": "12px 16px",
+                "borderRadius": "18px 18px 18px 4px",
+                "background": "#e8e8f0",
+                "color": _TEXT_PRI,
+                "fontSize": "14px",
+                "fontWeight": "500",
+                "lineHeight": "1.55",
+                "fontFamily": "'DM Sans', sans-serif",
+                "boxShadow": "0 1px 4px rgba(0,0,0,0.1)",
+                "display": "flex",
+                "alignItems": "center",
+            },
+        )]
+    )
+
+
 def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) -> html.Div:
     """Full chat interface screen with stock context panel."""
     messages = messages or []
@@ -1021,15 +1059,17 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
 
                     # PDF badge
                     html.Div(
-                        "📄 Annual report indexed" if has_pdf else "⚠ No annual report",
+                        id="rag-status-badge",
                         style={
                             "fontSize": "11px", "fontWeight": "700",
-                            "color": "#10b981" if has_pdf else "#f59e0b",
-                            "background": "#10b98120" if has_pdf else "#f59e0b20",
                             "padding": "6px 12px", "borderRadius": "20px",
                             "marginBottom": "16px",
+                            "textAlign": "center",
                         },
                     ),
+
+                    # RAG Status poller (hidden)
+                    dcc.Interval(id="rag-status-interval", interval=3000, n_intervals=0),
 
                     # Back button
                     html.Button(
