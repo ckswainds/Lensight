@@ -15,3 +15,20 @@ logs/
 .coverage
 htmlcov/
 demo.py
+template.py
+
+# Virtual Environments
+.venv/
+
+# Local diagnostic/test scripts not required in production
+/test_apis.py
+/test_llm.py
+/test_markdown_rendering.py
+/test_parallel_check.py
+/test_parallel_chunking.py
+/test_query_analyzer.py
+/test_streaming_diagnostic.py
+
+# Readmes and markdown files (not required in production)
+README.md
+*.md
