@@ -29,7 +29,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ── Design tokens ─────────────────────────────────────────────────────────────
-_FONT     = "Georgia, 'Times New Roman', serif"
+_FONT     = "'Merriweather', 'Georgia', serif"  # Premium serif for values
+_FONT_SANS = "'Poppins', 'Segoe UI', system-ui, sans-serif"  # Premium sans-serif for UI
 _ACCENT   = "#0d9488"
 _NAVY     = "#0f172a"
 _CARD_BG  = "#ffffff"
@@ -124,21 +125,21 @@ def _kpi_card(kpi: dict[str, Any]) -> dbc.Col:
             # Title row — with TTM badge if applicable
             html.Div([
                 html.P(kpi.get("title", ""), style={
-                    "fontSize": "11px", "fontWeight": "700",
+                    "fontSize": "11px", "fontWeight": "600",
                     "letterSpacing": "0.09em", "textTransform": "uppercase",
                     "color": _TEXT_MUT, "margin": "0",
-                    "fontFamily": "'DM Sans', system-ui, sans-serif",
+                    "fontFamily": _FONT_SANS,
                 }),
                 # TTM badge — shown when value is from TTM quarter
                 html.Span(
                     ttm_label,
                     style={
-                        "fontSize": "9px", "fontWeight": "800",
+                        "fontSize": "9px", "fontWeight": "700",
                         "color": _ACCENT, "background": _ACCENT + "18",
                         "padding": "1px 6px", "borderRadius": "8px",
                         "letterSpacing": "0.04em",
                         "marginLeft": "6px",
-                        "fontFamily": "'DM Sans', sans-serif",
+                        "fontFamily": _FONT_SANS,
                         "display": "inline" if (is_ttm and ttm_label) else "none",
                     },
                 ),
@@ -150,16 +151,16 @@ def _kpi_card(kpi: dict[str, Any]) -> dbc.Col:
             # Value + unit
             html.Div([
                 html.Span(value_str, className="kpi-value", style={
-                    "fontSize": "34px", "fontWeight": "900",
+                    "fontSize": "34px", "fontWeight": "700",
                     "color": value_color, "fontFamily": _FONT,
                     "lineHeight": "1", "letterSpacing": "-0.02em",
                 }),
                 html.Span(
                     unit if not is_na else "",
                     style={
-                        "fontSize": "15px", "fontWeight": "700",
+                        "fontSize": "15px", "fontWeight": "600",
                         "color": _TEXT_MUT, "marginLeft": "3px",
-                        "fontFamily": "'DM Sans', sans-serif",
+                        "fontFamily": _FONT_SANS,
                     },
                 ),
             ], style={"marginBottom": "10px"}),
@@ -167,20 +168,20 @@ def _kpi_card(kpi: dict[str, Any]) -> dbc.Col:
             # Label pill + trend
             html.Div([
                 html.Span(label, style={
-                    "fontSize": "10px", "fontWeight": "700",
+                    "fontSize": "10px", "fontWeight": "600",
                     "color": lbl_color,
                     "background": lbl_color + "1a",
                     "padding": "3px 9px", "borderRadius": "20px",
                     "marginRight": "8px", "letterSpacing": "0.05em",
                     "textTransform": "uppercase",
-                    "fontFamily": "'DM Sans', sans-serif",
+                    "fontFamily": _FONT_SANS,
                 }),
                 html.Span(
                     "" if is_na else f"{icon} {trend.replace('_', ' ').title()}",
                     style={
-                        "fontSize": "12px", "fontWeight": "600",
+                        "fontSize": "12px", "fontWeight": "500",
                         "color": t_color,
-                        "fontFamily": "'DM Sans', sans-serif",
+                        "fontFamily": _FONT_SANS,
                     },
                 ),
             ], style={"display": "flex", "alignItems": "center"}),
@@ -191,11 +192,11 @@ def _kpi_card(kpi: dict[str, Any]) -> dbc.Col:
 
 def _section(text: str) -> html.Div:
     return html.Div(text, className="section-label", style={
-        "fontSize": "11px", "fontWeight": "800",
+        "fontSize": "11px", "fontWeight": "600",
         "letterSpacing": "0.13em", "textTransform": "uppercase",
         "color": _ACCENT, "borderLeft": f"3px solid {_ACCENT}",
         "paddingLeft": "10px", "marginBottom": "10px", "marginTop": "4px",
-        "fontFamily": "'DM Sans', system-ui, sans-serif",
+        "fontFamily": _FONT_SANS,
     })
 
 
@@ -205,12 +206,12 @@ def _score_pill(label: str, score: float) -> html.Span:
         f"{label}  {score}/5",
         className="score-pill",
         style={
-            "fontSize": "11px", "fontWeight": "700",
+            "fontSize": "11px", "fontWeight": "600",
             "color": color, "background": color + "1f",
             "padding": "4px 11px", "borderRadius": "20px",
             "marginRight": "6px", "display": "inline-block",
             "marginBottom": "4px", "letterSpacing": "0.02em",
-            "fontFamily": "'DM Sans', sans-serif",
+            "fontFamily": _FONT_SANS,
         },
     )
 
@@ -219,13 +220,13 @@ def _header_logo() -> html.Div:
     """Shared header logo component."""
     return html.Div([
         html.Span("L", style={
-            "fontSize": "22px", "fontWeight": "900",
+            "fontSize": "22px", "fontWeight": "700",
             "color": _ACCENT, "fontFamily": _FONT, "marginRight": "2px",
         }),
         html.Span("ENSIGHT", style={
-            "fontSize": "14px", "fontWeight": "800",
+            "fontSize": "14px", "fontWeight": "600",
             "letterSpacing": "0.22em", "color": "#94a3b8",
-            "fontFamily": "'DM Sans', sans-serif",
+            "fontFamily": _FONT_SANS,
             "verticalAlign": "middle",
         }),
     ], style={
@@ -600,7 +601,7 @@ def build_loading_screen() -> html.Div:
             "minHeight": "100vh", "background": _NAVY,
             "display": "flex", "flexDirection": "column",
             "alignItems": "center", "justifyContent": "center",
-            "fontFamily": "'DM Sans', system-ui, sans-serif",
+            "fontFamily": _FONT_SANS,
             "padding": "40px 20px",
         },
         children=[
@@ -612,9 +613,9 @@ def build_loading_screen() -> html.Div:
                     "color": _ACCENT, "fontFamily": _FONT,
                 }),
                 html.Span("ENSIGHT", style={
-                    "fontSize": "17px", "fontWeight": "800",
+                    "fontSize": "17px", "fontWeight": "600",
                     "letterSpacing": "0.25em", "color": "#94a3b8",
-                    "fontFamily": "'DM Sans', sans-serif",
+                    "fontFamily": _FONT_SANS,
                     "marginLeft": "4px",
                 }),
             ], style={
@@ -749,7 +750,7 @@ def build_layout(data: dict[str, Any]) -> html.Div:
 
     return html.Div(
         style={"background": _PAGE_BG, "minHeight": "100vh",
-               "fontFamily": "'DM Sans', system-ui, sans-serif"},
+               "fontFamily": _FONT_SANS},
         children=[
 
             # CSS loaded from dashboard/assets/style.css automatically
@@ -768,7 +769,7 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                             html.H1(company, style={
                                 "fontFamily": _FONT,
                                 "fontSize": "clamp(22px, 3vw, 36px)",
-                                "fontWeight": "900", "color": "#f8fafc",
+                                "fontWeight": "700", "color": "#f8fafc",
                                 "margin": "0 0 8px 0",
                                 "letterSpacing": "-0.01em", "lineHeight": "1.1",
                             }),
@@ -790,7 +791,7 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                         dbc.Col([
                             html.Div(style={"textAlign": "right", "paddingTop": "4px"}, children=[
                                 html.Div("OVERALL SCORE", style={
-                                    "fontSize": "10px", "fontWeight": "800",
+                                    "fontSize": "10px", "fontWeight": "600",
                                     "letterSpacing": "0.2em", "color": "#64748b",
                                     "marginBottom": "4px",
                                 }),
@@ -799,13 +800,13 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                                         f"{scores.get('overall_score', 0):.1f}",
                                         style={
                                             "fontFamily": _FONT,
-                                            "fontSize": "52px", "fontWeight": "900",
+                                            "fontSize": "52px", "fontWeight": "700",
                                             "color": _ACCENT, "lineHeight": "1",
                                             "letterSpacing": "-0.03em",
                                         },
                                     ),
                                     html.Span("/5", style={
-                                        "fontSize": "20px", "fontWeight": "700",
+                                        "fontSize": "20px", "fontWeight": "600",
                                         "color": "#475569",
                                     }),
                                 ], style={"marginBottom": "10px"}),
@@ -831,9 +832,9 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                                         "borderRadius": "20px",
                                         "padding": "6px 16px",
                                         "fontSize": "12px",
-                                        "fontWeight": "700",
+                                        "fontWeight": "600",
                                         "cursor": "pointer",
-                                        "fontFamily": "'DM Sans', sans-serif",
+                                        "fontFamily": _FONT_SANS,
                                         "transition": "all 0.18s ease",
                                         "letterSpacing": "0.04em",
                                     },
@@ -851,9 +852,9 @@ def build_layout(data: dict[str, Any]) -> html.Div:
                                         "borderRadius": "20px",
                                         "padding": "6px 16px",
                                         "fontSize": "12px",
-                                        "fontWeight": "700",
+                                        "fontWeight": "600",
                                         "cursor": "pointer",
-                                        "fontFamily": "'DM Sans', sans-serif",
+                                        "fontFamily": _FONT_SANS,
                                         "transition": "all 0.18s ease",
                                         "letterSpacing": "0.04em",
                                     },
@@ -937,7 +938,7 @@ def _chat_bubble(role: str, content: str) -> html.Div:
                 "fontSize": "14px",
                 "fontWeight": "500",
                 "lineHeight": "1.55",
-                "fontFamily": "'DM Sans', sans-serif",
+                "fontFamily": _FONT_SANS,
                 "boxShadow": "0 1px 4px rgba(0,0,0,0.1)",
                 "whiteSpace": "pre-wrap",
             },
@@ -967,7 +968,7 @@ def _loading_bubble() -> html.Div:
                 "fontSize": "14px",
                 "fontWeight": "500",
                 "lineHeight": "1.55",
-                "fontFamily": "'DM Sans', sans-serif",
+                "fontFamily": _FONT_SANS,
                 "boxShadow": "0 1px 4px rgba(0,0,0,0.1)",
                 "display": "flex",
                 "alignItems": "center",
@@ -1002,7 +1003,7 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
 
     return html.Div(
         style={"display": "flex", "height": "100vh", "background": _PAGE_BG,
-               "fontFamily": "'DM Sans', system-ui, sans-serif", "overflow": "hidden"},
+               "fontFamily": _FONT_SANS, "overflow": "hidden"},
         children=[
 
             # ── Left: Context Panel ───────────────────────────────────────
@@ -1166,7 +1167,7 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
                                     "flex": "1", "resize": "none", "height": "52px",
                                     "border": f"1.5px solid {_BORDER}",
                                     "borderRadius": "12px", "padding": "12px 14px",
-                                    "fontSize": "14px", "fontFamily": "'DM Sans', sans-serif",
+                                    "fontSize": "14px", "fontFamily": _FONT_SANS,
                                     "outline": "none", "lineHeight": "1.4",
                                 },
                             ),
@@ -1180,7 +1181,7 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
                                     "border": "none", "borderRadius": "12px",
                                     "color": "#ffffff", "fontWeight": "800",
                                     "fontSize": "13px", "cursor": "pointer",
-                                    "fontFamily": "'DM Sans', sans-serif",
+                                    "fontFamily": _FONT_SANS,
                                     "height": "52px", "transition": "all 0.18s ease",
                                 },
                             ),
@@ -1200,7 +1201,7 @@ def build_error_layout(message: str) -> html.Div:
             "minHeight": "100vh", "background": _PAGE_BG,
             "display": "flex", "alignItems": "center",
             "justifyContent": "center",
-            "fontFamily": "'DM Sans', sans-serif",
+            "fontFamily": _FONT_SANS,
         },
         children=[dbc.Card(
             dbc.CardBody([
@@ -1208,7 +1209,7 @@ def build_error_layout(message: str) -> html.Div:
                     "fontSize": "48px", "textAlign": "center", "marginBottom": "16px",
                 }),
                 html.H4("Dashboard unavailable", style={
-                    "fontFamily": _FONT, "fontWeight": "900",
+                    "fontFamily": _FONT, "fontWeight": "700",
                     "textAlign": "center", "color": _TEXT_PRI, "marginBottom": "12px",
                 }),
                 html.P(message, style={

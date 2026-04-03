@@ -27,14 +27,22 @@ class LLMOrchestrator:
         )
         logger.debug(f"[ORCHESTRATOR] LLM initialized with model: {config.LLM_MODEL}")
 
-        # Grounded chat chain
+        # Grounded chat chain with LangSmith tracing
         self.chat_prompt = PromptBuilder.build_grounded_chat_prompt()
-        self.chat_chain = self.chat_prompt | self.chat_llm | StrOutputParser()
+        self.chat_chain = (
+            self.chat_prompt
+            | self.chat_llm.with_config(run_name="grounded_chat_llm", tags=["chat", "grounded"])
+            | StrOutputParser()
+        )
 
-        # Summarization chain (for memory compression)
+        # Summarization chain (for memory compression) with LangSmith tracing
         self.summarize_prompt = PromptBuilder.build_summarization_prompt()
-        self.summarize_chain = self.summarize_prompt | self.chat_llm | StrOutputParser()
-        logger.info("[ORCHESTRATOR] LLMOrchestrator initialized successfully")
+        self.summarize_chain = (
+            self.summarize_prompt
+            | self.chat_llm.with_config(run_name="summarization_llm", tags=["chat", "memory"])
+            | StrOutputParser()
+        )
+        logger.info("[ORCHESTRATOR] LLMOrchestrator initialized successfully with LangSmith tracing enabled")
 
     def analyze_company(self, data: dict, rag_context: str = "") -> str:
         """Generate a full qualitative narrative report from financial data."""
@@ -62,38 +70,64 @@ class LLMOrchestrator:
         financial_summary: str,
         rag_context: str,
         conversation_summary: str = "",
-        rag_ready: bool = False,
+        rag_status: str = "idle",
     ) -> str:
         """
         Grounded chat using the strict system prompt.
         Uses computed ratios + RAG context. Refuses to fabricate.
+        
+        Parameters
+        ----------
+        rag_status : str
+            One of: "idle", "indexing", "ready", "error"
+            - "ready": Annual Report is indexed and available
+            - "indexing": Annual Report is still being processed
+            - "idle": No annual report uploaded
+            - "error": Indexing failed
         """
         logger.info(f"[CHAT] Starting chat_grounded for {company}. Question: {question[:50]}...")
-        logger.debug(f"[CHAT] RAG Ready: {rag_ready}, Summary length: {len(conversation_summary)}")
+        logger.debug(f"[CHAT] RAG Status: {rag_status}, Summary length: {len(conversation_summary)}")
         
-        report_status = (
-            "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
-            if rag_ready else
-            "Annual Report is STILL INDEXING. It is currently unavailable. Answer using ONLY the financial ratios provided. DO NOT try to answer PDF-specific questions yet, and disclose that the report is still processing if the user asks for it."
-        )
+        # Adaptive report status message based on RAG state
+        if rag_status == "ready":
+            report_status = "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
+            rag_ready_flag = True
+        elif rag_status == "indexing":
+            report_status = "Annual Report is currently being indexed. It will be available shortly. For now, answer using ONLY the financial ratios provided. Disclose that the report is still processing."
+            rag_ready_flag = False
+        elif rag_status == "error":
+            report_status = "Annual Report indexing encountered an error. Answer using ONLY the financial ratios provided. Disclose that the report become unavailable."
+            rag_ready_flag = False
+        else:  # idle or unknown
+            report_status = "No annual report was uploaded. Answer using ONLY the financial ratios provided. Clarify that insights from an annual report are not available."
+            rag_ready_flag = False
 
         try:
-            response = self.chat_chain.invoke({
-                "company": company,
-                "conversation_summary": conversation_summary or "No prior conversation.",
-                "financial_summary": financial_summary,
-                "report_status": report_status,
-                "rag_context": rag_context if (rag_context and rag_ready) else "No context available (indexing in progress or no PDF).",
-                "question": question,
-            })
+            response = self.chat_chain.invoke(
+                {
+                    "company": company,
+                    "conversation_summary": conversation_summary or "No prior conversation.",
+                    "financial_summary": financial_summary,
+                    "report_status": report_status,
+                    "rag_context": rag_context if (rag_context and rag_ready_flag) else "No context available (no report uploaded).",
+                    "question": question,
+                },
+                {"run_name": "grounded_chat_flow", "tags": ["chat", "user-question"]}
+            )
             logger.info(f"[CHAT] Response generated successfully. Length: {len(response)} chars")
         except Exception as e:
             logger.error(f"[CHAT] Error during chat_grounded: {str(e)}", exc_info=True)
             raise
         
-        # Always add disclaimer when Annual Report is still indexing
-        if not rag_ready:
-            disclaimer = "\n\n---\n⏳ **Note:** Annual Report is still being indexed. This answer is based on financial ratios only. Qualitative insights from the report will be available once indexing completes."
+        # Add adaptive disclaimer based on RAG status
+        if rag_status == "indexing":
+            disclaimer = "\n\n---\n⏳ **Note:** Annual Report indexing is in progress. This answer is based on financial data only. Qualitative insights from the report will be available once indexing completes."
+            response = response + disclaimer
+        elif rag_status == "idle":
+            # No disclaimer needed for idle state - message is already clear
+            pass
+        elif rag_status == "error":
+            disclaimer = "\n\n---\n⚠️ **Note:** Annual Report indexing encountered an error. This answer is based on financial data only."
             response = response + disclaimer
         
         return response
@@ -105,20 +139,33 @@ class LLMOrchestrator:
         financial_summary: str,
         rag_context: str,
         conversation_summary: str = "",
-        rag_ready: bool = False,
+        rag_status: str = "idle",
     ):
         """
         Streaming version of chat_grounded.
         Yields tokens as they arrive from the LLM.
+        
+        Parameters
+        ----------
+        rag_status : str
+            One of: "idle", "indexing", "ready", "error"
         """
         logger.info(f"[STREAM] Starting chat_grounded_stream for {company}. Question: {question[:50]}...")
-        logger.debug(f"[STREAM] RAG Ready: {rag_ready}, Conversation history length: {len(conversation_summary)}")
+        logger.debug(f"[STREAM] RAG Status: {rag_status}, Conversation history length: {len(conversation_summary)}")
         
-        report_status = (
-            "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
-            if rag_ready else
-            "Annual Report is STILL INDEXING. It is currently unavailable. Answer using ONLY the financial ratios provided. DO NOT try to answer PDF-specific questions yet, and disclose that the report is still processing if the user asks for it."
-        )
+        # Adaptive report status message based on RAG state
+        if rag_status == "ready":
+            report_status = "Annual Report indexing is complete. Use report context specifically for quality/qualitative insights."
+            rag_ready_flag = True
+        elif rag_status == "indexing":
+            report_status = "Annual Report is currently being indexed. It will be available shortly. For now, answer using ONLY the financial ratios provided. Disclose that the report is still processing."
+            rag_ready_flag = False
+        elif rag_status == "error":
+            report_status = "Annual Report indexing encountered an error. Answer using ONLY the financial ratios provided. Disclose that the report became unavailable."
+            rag_ready_flag = False
+        else:  # idle or unknown
+            report_status = "No annual report was uploaded. Answer using ONLY the financial ratios provided. Clarify that insights from an annual report are not available."
+            rag_ready_flag = False
 
         try:
             # Stream tokens from LLM
@@ -129,7 +176,7 @@ class LLMOrchestrator:
                 "conversation_summary": conversation_summary or "No prior conversation.",
                 "financial_summary": financial_summary,
                 "report_status": report_status,
-                "rag_context": rag_context if (rag_context and rag_ready) else "No context available (indexing in progress or no PDF).",
+                "rag_context": rag_context if (rag_context and rag_ready_flag) else "No context available (no report uploaded).",
                 "question": question,
             }):
                 full_response += token
@@ -142,12 +189,17 @@ class LLMOrchestrator:
             logger.error(f"[STREAM] Error during streaming: {str(e)}", exc_info=True)
             raise
         
-        # Yield disclaimer after main response
-        if not rag_ready:
-            disclaimer = "\n\n---\n⏳ **Note:** Annual Report is still being indexed. This answer is based on financial ratios only. Qualitative insights from the report will be available once indexing completes."
+        # Yield adaptive disclaimer after main response
+        if rag_status == "indexing":
+            disclaimer = "\n\n---\n⏳ **Note:** Annual Report indexing is in progress. This answer is based on financial data only. Qualitative insights will be available once indexing completes."
             for token in disclaimer:
                 yield token
-            logger.debug("[STREAM] Disclaimer yielded")
+            logger.debug("[STREAM] Indexing note yielded")
+        elif rag_status == "error":
+            disclaimer = "\n\n---\n⚠️ **Note:** Annual Report indexing encountered an error. This answer is based on financial data only."
+            for token in disclaimer:
+                yield token
+            logger.debug("[STREAM] Error note yielded")
 
     def compress_history(self, messages: list) -> str:
         """

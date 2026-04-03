@@ -41,6 +41,8 @@ from queue import Queue
 from dash import Input, Output, State, callback_context, no_update
 from dash.exceptions import PreventUpdate
 
+from llm.query_analyzer import get_analyzer
+
 logger = logging.getLogger(__name__)
 
 # Global stream queue for streaming responses
@@ -333,10 +335,12 @@ def register_callbacks(app) -> None:
         from dashboard.pipeline_runner import get_status, RAGStatus
         status = get_status()
         rag_status = status.get("rag_status", RAGStatus.IDLE.value)
+        rag_progress = status.get("rag_progress", 0)
+        rag_label = status.get("rag_label", "")
 
         # Base style
         base_style = {
-            "fontSize": "11px", "fontWeight": "700",
+            "fontSize": "11px", "fontWeight": "600",
             "padding": "6px 12px", "borderRadius": "20px",
             "marginBottom": "16px", "textAlign": "center",
             "transition": "all 0.3s ease",
@@ -344,13 +348,25 @@ def register_callbacks(app) -> None:
 
         if rag_status == RAGStatus.READY.value:
             return "📄 Analysis Ready", {**base_style, "color": "#10b981", "background": "#10b98120"}, True
-        elif rag_status == RAGStatus.INDEXING.value:
-            # Pulsing effect via color change or just static text for now
-            return "⏳ Indexing PDF...", {**base_style, "color": "#12aada", "background": "#12aada20"}, False
+        
+        elif rag_status == RAGStatus.LOADING.value:
+            return f"📥 Reading Report... {rag_progress}%", {**base_style, "color": "#12aada", "background": "#12aada20"}, False
+        
+        elif rag_status == RAGStatus.CHUNKING.value:
+            return f"✂️ Processing Chunks... {rag_progress}%", {**base_style, "color": "#12aada", "background": "#12aada20"}, False
+        
+        elif rag_status == RAGStatus.EMBEDDING.value:
+            progress_bar = "▓" * (rag_progress // 10) + "░" * (10 - rag_progress // 10)
+            return f"⚡ Embedding {progress_bar} {rag_progress}%", {**base_style, "color": "#12aada", "background": "#12aada20", "fontFamily": "monospace", "fontSize": "10px"}, False
+        
+        elif rag_status == RAGStatus.STORING.value:
+            return f"💾 Finalizing... {rag_progress}%", {**base_style, "color": "#8b5cf6", "background": "#8b5cf620"}, False
+        
         elif rag_status == RAGStatus.ERROR.value:
-            return "⚠ Indexing Failed", {**base_style, "color": "#ef4444", "background": "#ef444420"}, True
-        else:
-            return "📊 Financials Only", {**base_style, "color": "#64748b", "background": "#f1f5f9"}, False
+            return f"⚠ {rag_label or 'Indexing Failed'}", {**base_style, "color": "#ef4444", "background": "#ef444420"}, True
+        
+        else:  # IDLE or unknown
+            return "📊 Financials Only", {**base_style, "color": "#64748b", "background": "#f1f5f9"}, True
 
     # ── 6a. Send chat message (optimistic UI update) ───────────────────────
     @app.callback(
@@ -444,17 +460,31 @@ def register_callbacks(app) -> None:
                     data = json.load(fh)
 
                 company = data.get("company", "Unknown")
-                financial_summary = json.dumps(data, indent=2)
+                
+                # Use smart filtering to reduce token usage
+                analyzer = get_analyzer()
+                financial_summary, analysis_metadata = analyzer.process_query(question, data)
+                
+                logger.debug(
+                    f"[STREAM] Smart filtering applied: {analysis_metadata['context_type']} "
+                    f"({analysis_metadata['confidence']:.1%} confidence, "
+                    f"categories: {', '.join(analysis_metadata['categories']) or 'none'})"
+                )
                 logger.debug(f"[STREAM] Loaded analysis for {company}")
 
                 # Get RAG status
                 from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
                 status = get_status()
-                rag_status = status.get("rag_status", RAGStatus.IDLE.value)
+                rag_status_raw = status.get("rag_status", RAGStatus.IDLE.value)
+                
+                # Map new granular RAG states to orchestrator states for compatibility
+                rag_status_for_orchestrator = rag_status_raw
+                if rag_status_raw in ("loading", "chunking", "embedding", "storing"):
+                    rag_status_for_orchestrator = "indexing"  # Group intermediate states as "indexing"
                 
                 rag_context = ""
                 rag_store_instance = get_rag_store()
-                if rag_store_instance and rag_status == RAGStatus.READY.value:
+                if rag_store_instance and rag_status_raw == RAGStatus.READY.value:
                     try:
                         from rag.retriever import RAGRetriever
                         retriever = RAGRetriever(rag_store_instance)
@@ -480,7 +510,7 @@ def register_callbacks(app) -> None:
                     financial_summary=financial_summary,
                     rag_context=rag_context,
                     conversation_summary=conv_summary,
-                    rag_ready=(rag_status == RAGStatus.READY.value)
+                    rag_status=rag_status_for_orchestrator
                 ):
                     _STREAM_QUEUE.put(("token", token))
                     token_count += 1

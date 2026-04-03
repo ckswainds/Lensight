@@ -38,10 +38,16 @@ class Stage(str, Enum):
     ERROR       = "error"
 
 class RAGStatus(str, Enum):
-    IDLE = "idle"
-    INDEXING = "indexing"
-    READY = "ready"
-    ERROR = "error"
+    IDLE       = "idle"         # No PDF uploaded
+    LOADING    = "loading"      # Reading/parsing PDF
+    CHUNKING   = "chunking"     # Splitting into chunks
+    EMBEDDING  = "embedding"    # Embedding in progress
+    STORING    = "storing"      # Storing vectors
+    READY      = "ready"        # Indexing complete
+    ERROR      = "error"        # Indexing failed
+    
+    # Backwards compatibility
+    INDEXING   = "embedding"    # Old name maps to embedding
 
 
 # Human-readable label + progress % per stage
@@ -61,15 +67,18 @@ _STAGE_META: dict[Stage, tuple[str, int]] = {
 @dataclass
 class PipelineStatus:
     """Thread-safe pipeline status container."""
-    stage:      Stage  = Stage.IDLE
-    rag_status: RAGStatus = RAGStatus.IDLE
-    progress:   int    = 0
-    label:      str    = "Waiting for upload"
-    error:      str    = ""
-    company:    str    = ""
-    started_at: str    = ""
-    done_at:    str    = ""
-    _lock:      threading.Lock = field(default_factory=threading.Lock, repr=False)
+    stage:       Stage  = Stage.IDLE
+    rag_status:  RAGStatus = RAGStatus.IDLE
+    progress:    int    = 0
+    label:       str    = "Waiting for upload"
+    error:       str    = ""
+    company:     str    = ""
+    started_at:  str    = ""
+    done_at:     str    = ""
+    # RAG progress tracking
+    rag_progress: int   = 0      # 0-100%
+    rag_label:    str   = ""     # e.g., "Embedding: 45/120 chunks"
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def update(self, stage: Stage, error: str = "") -> None:
         label, progress = _STAGE_META[stage]
@@ -79,9 +88,11 @@ class PipelineStatus:
             self.label    = label
             self.error    = error
 
-    def update_rag(self, status: RAGStatus) -> None:
+    def update_rag(self, status: RAGStatus, progress: int = 0, label: str = "") -> None:
         with self._lock:
             self.rag_status = status
+            self.rag_progress = max(0, min(100, progress))  # Clamp 0-100
+            self.rag_label = label
 
     def set_company(self, name: str) -> None:
         with self._lock:
@@ -90,8 +101,10 @@ class PipelineStatus:
     def to_dict(self) -> dict[str, Any]:
         with self._lock:
             return {
-                "stage":      self.stage.value,
-                "rag_status": self.rag_status.value,
+                "stage":       self.stage.value,
+                "rag_status":  self.rag_status.value,
+                "rag_progress": self.rag_progress,
+                "rag_label":   self.rag_label,
                 "progress":   self.progress,
                 "label":      self.label,
                 "error":      self.error,
@@ -244,28 +257,52 @@ def run_pipeline(
         logger.info("Core analysis complete. RAG indexing starting in background...")
 
         # ── Stage: RAG_INDEXING ──────────────────────────────────
-        _status.update_rag(RAGStatus.INDEXING)
+        # First, check if PDF exists — only proceed if one was uploaded
         global _rag_store
         _rag_store = None
-        try:
-            pdf_files = list(uploads_dir.glob("*.pdf"))
-            if pdf_files:
-                pdf_path = pdf_files[0]
-                logger.info("Indexing PDF in background: %s", pdf_path.name)
+        pdf_files = list(uploads_dir.glob("*.pdf"))
+        
+        if not pdf_files:
+            # No PDF uploaded — skip RAG entirely
+            _status.update_rag(RAGStatus.IDLE, 0, "No annual report uploaded")
+            logger.info("No PDF found for RAG — staying in IDLE state.")
+        else:
+            # PDF exists — proceed with indexing
+            pdf_path = pdf_files[0]
+            logger.info("PDF found for RAG: %s", pdf_path.name)
+            
+            try:
+                # ── LOADING: Read PDF
+                _status.update_rag(RAGStatus.LOADING, 5, "Reading annual report...")
                 from ingestion.unstructured_loader import UnstructuredLoader
-                from rag.vector_store import LensightVectorStore
                 chunks = UnstructuredLoader().load_pdf(str(pdf_path))
-                vs = LensightVectorStore()
-                vs.build_from_documents(chunks)
+                logger.info(f"PDF loaded with {len(chunks)} chunks")
+                
+                # ── CHUNKING: Already done by loader
+                _status.update_rag(RAGStatus.CHUNKING, 15, f"Processing {len(chunks)} document chunks...")
+                logger.info(f"[RAG] {len(chunks)} chunks ready for embedding")
+                
+                # ── EMBEDDING: Build vector store with progress tracking
+                def progress_callback(current: int, total: int, label: str):
+                    """Update progress during embedding."""
+                    if total > 0:
+                        progress_pct = 30 + int((current / total) * 50)  # 30-80% range
+                        _status.update_rag(RAGStatus.EMBEDDING, progress_pct, f"Embedding: {current}/{total} chunks")
+                        logger.debug(f"[RAG] Embedding progress: {current}/{total} ({progress_pct}%)")
+                
+                from rag.vector_store import LensightVectorStore
+                vs = LensightVectorStore(batch_size=10, num_workers=4)
+                vs.build_from_documents(chunks, progress_callback=progress_callback)
+                
+                # ── STORING: Complete
+                _status.update_rag(RAGStatus.STORING, 85, "Finalizing index...")
                 _rag_store = vs
-                _status.update_rag(RAGStatus.READY)
+                _status.update_rag(RAGStatus.READY, 100, "Annual report ready")
                 logger.info("RAG indexing finished successfully.")
-            else:
-                _status.update_rag(RAGStatus.IDLE)
-                logger.info("No PDF found for RAG.")
-        except Exception as rag_exc:
-            logger.warning("RAG indexing failed in background: %s", rag_exc)
-            _status.update_rag(RAGStatus.ERROR)
+                
+            except Exception as rag_exc:
+                logger.warning("RAG indexing failed in background: %s", rag_exc)
+                _status.update_rag(RAGStatus.ERROR, 0, f"Error: {str(rag_exc)[:50]}")
 
     except Exception as exc:
         tb = traceback.format_exc()
