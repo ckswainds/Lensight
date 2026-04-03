@@ -176,6 +176,107 @@ body {
     transform: translateY(-2px);
     box-shadow: 0 4px 16px rgba(13,148,136,0.15);
 }
+
+/* ── Chat Markdown Styling ───────────────────────────── */
+/* Bold text */
+.dash-table strong,
+.dash-markdown strong,
+.dash-markdown b {
+    font-weight: 700;
+    color: inherit;
+}
+
+/* Italics */
+.dash-markdown em,
+.dash-markdown i {
+    font-style: italic;
+    color: inherit;
+}
+
+/* Code inline */
+.dash-markdown code {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+    color: inherit;
+    word-break: break-word;
+}
+
+/* Code block */
+.dash-markdown pre {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.dash-markdown pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+}
+
+/* Lists */
+.dash-markdown ul,
+.dash-markdown ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+
+.dash-markdown li {
+    margin: 4px 0;
+}
+
+/* Links */
+.dash-markdown a {
+    color: #0d9488;
+    text-decoration: underline;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.dash-markdown a:hover {
+    color: #059669;
+    opacity: 0.9;
+}
+
+/* Headers */
+.dash-markdown h1,
+.dash-markdown h2,
+.dash-markdown h3,
+.dash-markdown h4,
+.dash-markdown h5,
+.dash-markdown h6 {
+    font-weight: 700;
+    margin: 12px 0 8px 0;
+    color: inherit;
+}
+
+.dash-markdown h1 { font-size: 1.4em; }
+.dash-markdown h2 { font-size: 1.3em; }
+.dash-markdown h3 { font-size: 1.2em; }
+
+/* Horizontal rule */
+.dash-markdown hr {
+    border: none;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+    margin: 12px 0;
+}
+
+/* Blockquote */
+.dash-markdown blockquote {
+    border-left: 3px solid rgba(0, 0, 0, 0.2);
+    padding-left: 12px;
+    margin-left: 0;
+    opacity: 0.85;
+    font-style: italic;
+}
 .upload-zone-pdf:hover {
     background: #e0e7ff !important;
     border-color: #4f46e5 !important;

@@ -921,6 +921,22 @@ def build_layout(data: dict[str, Any]) -> html.Div:
 
 def _chat_bubble(role: str, content: str) -> html.Div:
     is_user = role == "user"
+    
+    # Use Markdown for AI responses, plain text for user messages
+    if is_user:
+        message_content = html.Div(content)
+    else:
+        message_content = dcc.Markdown(
+            content,
+            style={
+                "margin": "0",
+                "fontSize": "14px",
+                "lineHeight": "1.55",
+                "fontFamily": _FONT_SANS,
+            },
+            dangerously_allow_html=False,
+        )
+    
     return html.Div(
         style={
             "display": "flex",
@@ -928,7 +944,7 @@ def _chat_bubble(role: str, content: str) -> html.Div:
             "marginBottom": "12px",
         },
         children=[html.Div(
-            content,
+            message_content,
             style={
                 "maxWidth": "78%",
                 "padding": "10px 16px",
