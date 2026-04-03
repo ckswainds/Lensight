@@ -505,40 +505,64 @@ def register_callbacks(app) -> None:
             import time as time_module
             worker_start = time_module.time()
             
+            # CRITICAL: Log that the thread actually started
+            print(f"[STREAM_WORKER_STARTED] 🚀 Thread execution begun at {worker_start}")
+            logger.info(f"[STREAM] 🚀 Thread started. Request queue size: {_STREAM_QUEUE.qsize()}")
+            
             try:
                 question = request_data.get("question")
                 chat_history = request_data.get("chat_history", [])
                 conv_summary = request_data.get("conv_summary", "")
 
                 logger.info(f"[STREAM] 🚀 Starting stream worker for question: {question[:60]}...")
-
+                print(f"[STREAM_WORKER] Question: {question[:60]}")
+                
                 # Load analysis
                 analysis_file = DATA_PROCESSED_DIR / "analysis.json"
                 if not analysis_file.exists():
                     logger.error("[STREAM] ❌ Analysis file not found")
                     _STREAM_QUEUE.put(("error", "Analysis file not found"))
+                    print("[STREAM_WORKER] Analysis file not found error queued")
                     return
 
-                with analysis_file.open(encoding="utf-8") as fh:
-                    data = json.load(fh)
+                try:
+                    with analysis_file.open(encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    print(f"[STREAM_WORKER] Analysis loaded successfully")
+                except Exception as load_exc:
+                    logger.error(f"[STREAM] ❌ Failed to load analysis.json: {load_exc}", exc_info=True)
+                    _STREAM_QUEUE.put(("error", f"Failed to load analysis: {str(load_exc)[:100]}"))
+                    print(f"[STREAM_WORKER] Load error: {load_exc}")
+                    return
 
                 company = data.get("company", "Unknown")
                 logger.info(f"[STREAM] 📊 Company: {company}")
                 
                 # Use smart filtering to reduce token usage
-                analyzer = get_analyzer()
-                financial_summary, analysis_metadata = analyzer.process_query(question, data)
+                try:
+                    analyzer = get_analyzer()
+                    financial_summary, analysis_metadata = analyzer.process_query(question, data)
+                    logger.info(f"[STREAM] ✅ Query analysis complete: {analysis_metadata['context_type']}")
+                except Exception as analyzer_exc:
+                    logger.error(f"[STREAM] ⚠️ Query analyzer failed: {analyzer_exc}", exc_info=True)
+                    financial_summary = str(data.get("summary_scores", {}))[:2000]
+                    analysis_metadata = {"context_type": "full", "confidence": 1.0, "categories": []}
                 
                 logger.debug(
-                    f"[STREAM] Smart filtering applied: {analysis_metadata['context_type']} "
+                    f"[STREAM] Smart filtering: {analysis_metadata['context_type']} "
                     f"({analysis_metadata['confidence']:.1%} confidence, "
-                    f"categories: {', '.join(analysis_metadata['categories']) or 'none'})"
+                    f"categories: {', '.join(analysis_metadata.get('categories', [])) or 'none'})"
                 )
 
                 # Get RAG status
-                from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
-                status = get_status()
-                rag_status_raw = status.get("rag_status", RAGStatus.IDLE.value)
+                try:
+                    from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
+                    status = get_status()
+                    rag_status_raw = status.get("rag_status", RAGStatus.IDLE.value)
+                    logger.debug(f"[STREAM] RAG status: {rag_status_raw}")
+                except Exception as rag_status_exc:
+                    logger.warning(f"[STREAM] Could not get RAG status: {rag_status_exc}")
+                    rag_status_raw = "idle"
                 
                 # Map new granular RAG states to orchestrator states for compatibility
                 rag_status_for_orchestrator = rag_status_raw
@@ -546,15 +570,16 @@ def register_callbacks(app) -> None:
                     rag_status_for_orchestrator = "indexing"
                 
                 rag_context = ""
-                rag_store_instance = get_rag_store()
-                if rag_store_instance and rag_status_raw == RAGStatus.READY.value:
-                    try:
+                try:
+                    rag_store_instance = get_rag_store()
+                    if rag_store_instance and rag_status_raw == RAGStatus.READY.value:
                         from rag.retriever import RAGRetriever
                         retriever = RAGRetriever(rag_store_instance)
                         rag_context = retriever.retrieve_context(question)
-                        logger.debug("[STREAM] RAG context retrieved successfully")
-                    except Exception as exc:
-                        logger.warning(f"[STREAM] RAG retrieval failed: {exc}")
+                        logger.info(f"[STREAM] ✅ RAG context retrieved: {len(rag_context)} chars")
+                except Exception as rag_exc:
+                    logger.warning(f"[STREAM] RAG retrieval failed (continuing without): {rag_exc}")
+                    rag_context = ""
 
                 # Compress if needed
                 conv_summary = conv_summary or ""
@@ -565,25 +590,41 @@ def register_callbacks(app) -> None:
                 from llm.orchestrator import LLMOrchestrator
                 orchestrator = LLMOrchestrator()
                 logger.info("[STREAM] 📡 Starting LLM streaming (direct token mode)...")
+                print("[STREAM_WORKER] Orchestrator created, calling stream...")
 
                 token_count = 0
                 stream_start = time_module.time()
                 first_token_logged = False
                 
+                # Call the generator
                 try:
-                    for token in orchestrator.chat_grounded_stream(
+                    logger.info("[STREAM] Calling orchestrator.chat_grounded_stream()...")
+                    print("[STREAM_WORKER] Calling chat_grounded_stream()...")
+                    generator = orchestrator.chat_grounded_stream(
                         question=question,
                         company=company,
                         financial_summary=financial_summary,
                         rag_context=rag_context,
                         conversation_summary=conv_summary,
                         rag_status=rag_status_for_orchestrator
-                    ):
+                    )
+                    logger.info("[STREAM] ✅ Generator object created successfully")
+                    print("[STREAM_WORKER] Generator created, starting iteration...")
+                except Exception as gen_exc:
+                    logger.error(f"[STREAM] ❌ Failed to create stream generator: {gen_exc}", exc_info=True)
+                    _STREAM_QUEUE.put(("error", f"Generator creation failed: {str(gen_exc)[:100]}"))
+                    print(f"[STREAM_WORKER] Generator creation error: {gen_exc}")
+                    return
+                
+                try:
+                    for token in generator:
+                        print(f"[STREAM_WORKER_TOKEN] Received token #{token_count + 1}: {token[:30]}")
+                        
                         # Log first token arrival
                         if token_count == 0:
                             first_token_elapsed = time_module.time() - stream_start
                             logger.info(f"[STREAM] ⚡ FIRST TOKEN in {first_token_elapsed:.3f}s: '{token[:30]}...'")
-                            first_token_logged = True
+                            print(f"[STREAM_WORKER] FIRST TOKEN in {first_token_elapsed:.3f}s")
                         
                         # Queue the token
                         _STREAM_QUEUE.put(("token", token))
@@ -599,27 +640,39 @@ def register_callbacks(app) -> None:
                         if token is None or token == "":
                             logger.warning(f"[STREAM] ⚠️ Empty token received at position {token_count}")
                     
+                    print(f"[STREAM_WORKER_DONE] Total tokens queued: {token_count}")
                     if token_count == 0:
                         logger.warning("[STREAM] ⚠️ NO TOKENS GENERATED - stream generator was empty")
                         _STREAM_QUEUE.put(("error", "LLM generated no tokens (empty response)"))
+                        print("[STREAM_WORKER] No tokens generated")
                         return
                     
                     elapsed_total = time_module.time() - stream_start
                     logger.info(f"[STREAM] ✅ Streaming complete: {token_count} tokens in {elapsed_total:.2f}s")
                     _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
-                    
-                except StopIteration:
-                    logger.warning(f"[STREAM] Stream ended prematurely at {token_count} tokens")
-                    _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+                    print("[STREAM_WORKER] Done message queued")
                     
                 except Exception as stream_exc:
-                    logger.error(f"[STREAM] ❌ Exception during token streaming: {str(stream_exc)}", exc_info=True)
-                    _STREAM_QUEUE.put(("error", f"Streaming error: {str(stream_exc)[:100]}"))
+                    error_msg = str(stream_exc)
+                    logger.error(f"[STREAM] ❌ Exception during token streaming: {error_msg}", exc_info=True)
+                    print(f"[STREAM_WORKER_ERROR] Stream exception: {error_msg}")
+                    
+                    # Check if it's a timeout or quota error
+                    if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                        logger.error("[STREAM] ⏱️ TIMEOUT in LLM streaming")
+                        _STREAM_QUEUE.put(("error", f"LLM timeout: {error_msg[:80]}"))
+                    elif "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                        logger.error("[STREAM] 🚫 QUOTA EXCEEDED")
+                        _STREAM_QUEUE.put(("quota_exceeded", None))
+                    else:
+                        _STREAM_QUEUE.put(("error", f"Streaming error: {error_msg[:100]}"))
+                    print(f"[STREAM_WORKER_ERROR] Error message queued")
                     return
                     
             except Exception as exc:
                 error_msg = str(exc)
                 logger.error(f"[STREAM] ❌ Worker error: {error_msg}", exc_info=True)
+                print(f"[STREAM_WORKER_ERROR] Worker exception: {error_msg}")
                 
                 # Check if it's a quota exceeded error
                 if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
@@ -628,21 +681,15 @@ def register_callbacks(app) -> None:
                 else:
                     _STREAM_QUEUE.put(("error", error_msg[:200]))
 
-            except Exception as exc:
-                error_msg = str(exc)
-                logger.error(f"[STREAM] Streaming error occurred: {error_msg}", exc_info=True)
-                
-                # Check if it's a quota exceeded error (429)
-                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-                    logger.error("[STREAM] QUOTA EXCEEDED: Gemini API free tier limit reached (20 requests/day)")
-                    _STREAM_QUEUE.put(("quota_exceeded", None))
-                else:
-                    _STREAM_QUEUE.put(("error", error_msg))
-
         # Start background thread
-        thread = threading.Thread(target=_stream_worker, daemon=True)
-        thread.start()
-        logger.info("[START_STREAM] Background streaming thread started, polling enabled")
+        try:
+            thread = threading.Thread(target=_stream_worker, daemon=True)
+            thread.start()
+            logger.info(f"[START_STREAM] ✅ Background streaming thread started, polling enabled. Thread: {thread.name}")
+        except Exception as thread_exc:
+            logger.error(f"[START_STREAM] ❌ Failed to start streaming thread: {thread_exc}", exc_info=True)
+            _STREAM_QUEUE.put(("error", f"Thread creation failed: {str(thread_exc)[:100]}"))
+            return False, None, None
 
         # Enable interval polling, clear pending request, return initial state
         return False, streaming_data, None
@@ -837,5 +884,26 @@ def register_callbacks(app) -> None:
             data = json.load(fh)
         logger.info("Returning to dashboard from chat.")
         return build_layout(data), {"screen": "dashboard"}
+
+    # ── 8. Sync app-state to screen tracker for refresh warning ──────────────
+    # Updates window.onbeforeunload directly in the client browser
+    app.clientside_callback(
+        """
+        function(app_state) {
+            const screen = (app_state && app_state.screen) ? app_state.screen : 'upload';
+            window.onbeforeunload = function(e) {
+                if (screen === 'dashboard' || screen === 'processing' || screen === 'chat') {
+                    const warningMessage = 'Refreshing will clear your current analysis session. You will need to upload your files again and analysis will be done again from start. Are you sure you want to continue?';
+                    e.preventDefault();
+                    e.returnValue = warningMessage;
+                    return warningMessage;
+                }
+            };
+            return screen;
+        }
+        """,
+        Output("screen-state-tracker", "children"),
+        Input("app-state", "data"),
+    )
 
     logger.info("All callbacks registered.")

@@ -127,6 +127,9 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
         # Swapped between upload / loading / dashboard screens by callbacks
         html.Div(id="page-content", children=initial_content),
 
+        # ── Hidden div to track screen state for refresh warning ────────────────
+        html.Div(id="screen-state-tracker", style={"display": "none"}),
+
     ])
 
     register_callbacks(dash_app)
