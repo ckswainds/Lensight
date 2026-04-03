@@ -144,6 +144,7 @@ class LLMOrchestrator:
         """
         Streaming version of chat_grounded.
         Yields tokens as they arrive from the LLM.
+        Streams DIRECTLY from LLM (bypassing StrOutputParser to ensure real-time streaming).
         
         Parameters
         ----------
@@ -168,22 +169,56 @@ class LLMOrchestrator:
             rag_ready_flag = False
 
         try:
-            # Stream tokens from LLM
-            full_response = ""
-            token_count = 0
-            for token in self.chat_chain.stream({
+            import time
+            
+            # Build prompt
+            prompt_input = {
                 "company": company,
                 "conversation_summary": conversation_summary or "No prior conversation.",
                 "financial_summary": financial_summary,
                 "report_status": report_status,
                 "rag_context": rag_context if (rag_context and rag_ready_flag) else "No context available (no report uploaded).",
                 "question": question,
-            }):
-                full_response += token
-                token_count += 1
-                yield token
+            }
             
-            logger.info(f"[STREAM] Streaming complete. Total tokens yielded: {token_count}")
+            # Get the prompt messages without the output parser
+            prompt_messages = self.chat_prompt.invoke(prompt_input)
+            
+            token_count = 0
+            start_time = time.time()
+            first_token_time = None
+            accumulated_response = ""  # Track cumulative response to extract deltas
+            
+            # **DIRECT STREAMING FROM LLM** - extracts delta tokens from accumulated chunks
+            logger.debug("[STREAM] Starting direct LLM stream (token-delta extraction mode)")
+            for chunk in self.chat_llm.stream(prompt_messages):
+                # Each chunk is an AIMessage with `.content` = accumulated response so far
+                chunk_content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                
+                # Extract ONLY the new content (delta) since last chunk
+                if len(chunk_content) > len(accumulated_response):
+                    delta = chunk_content[len(accumulated_response):]
+                    accumulated_response = chunk_content
+                    
+                    # Track timing of first token
+                    if token_count == 0:
+                        first_token_time = time.time()
+                        elapsed = first_token_time - start_time
+                        logger.info(f"[STREAM] ⚡ FIRST CHUNK after {elapsed:.3f}s, delta: '{delta[:30]}...'")
+                    
+                    token_count += 1
+                    
+                    # Yield only the delta (new content)
+                    yield delta
+                    
+                    # Log every 10 deltas for diagnostics
+                    if token_count % 10 == 0:
+                        elapsed = time.time() - start_time
+                        rate = len(accumulated_response) / (elapsed + 0.001)
+                        logger.debug(f"[STREAM] Chunk #{token_count}, accumulated: {len(accumulated_response)} chars, rate: {rate:.1f} chars/sec")
+            
+            elapsed_total = time.time() - start_time
+            logger.info(f"[STREAM] ✓ Streaming complete. Chunks: {token_count}, Total: {len(accumulated_response)} chars, Time: {elapsed_total:.2f}s")
             
         except Exception as e:
             logger.error(f"[STREAM] Error during streaming: {str(e)}", exc_info=True)

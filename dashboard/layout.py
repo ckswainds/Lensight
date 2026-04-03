@@ -1085,8 +1085,8 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
                         },
                     ),
 
-                    # RAG Status poller (hidden)
-                    dcc.Interval(id="rag-status-interval", interval=3000, n_intervals=0),
+                    # RAG Status poller (disabled when not on chat) - 4 second polling to reduce flicker
+                    dcc.Interval(id="rag-status-interval", interval=4000, n_intervals=0),
 
                     # Back button
                     html.Button(
@@ -1130,13 +1130,14 @@ def build_chat_screen(data: dict, has_pdf: bool = False, messages: list = None) 
                                        style={"margin": "0", "color": _TEXT_MUT, "fontSize": "11px"}),
                             ]),
                             html.Span(
-                                "No annual report uploaded — answering from ratios only" if not has_pdf else "",
+                                id="chat-rag-status-message",
+                                children="",
                                 style={
                                     "marginLeft": "auto", "fontSize": "11px",
                                     "background": "#f59e0b20", "color": "#f59e0b",
                                     "padding": "4px 12px", "borderRadius": "12px",
                                     "fontWeight": "700",
-                                    "display": "" if not has_pdf else "none",
+                                    "display": "none",
                                 }
                             ),
                         ],

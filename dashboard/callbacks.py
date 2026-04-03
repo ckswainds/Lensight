@@ -118,6 +118,7 @@ def register_callbacks(app) -> None:
         This ensures the user can upload both files before processing starts.
         - xlsx is required — triggers the analysis pipeline
         - pdf is optional — saved to uploads/ for later RAG use
+        - CLEARS old uploads before processing new files
         """
         if not n_clicks:
             raise PreventUpdate
@@ -146,6 +147,20 @@ def register_callbacks(app) -> None:
 
         logger.info("Received Excel upload: %s", xlsx_filename)
 
+        # 🧹 Clear old uploads from previous session before processing new files
+        import shutil
+        if DATA_UPLOADS_DIR.exists():
+            try:
+                for old_file in DATA_UPLOADS_DIR.glob("*"):
+                    if old_file.is_file():
+                        old_file.unlink()
+                        logger.info(f"🧹 Cleared old upload: {old_file.name}")
+                    elif old_file.is_dir():
+                        shutil.rmtree(old_file)
+                        logger.info(f"🧹 Cleared old upload directory: {old_file.name}")
+            except Exception as exc:
+                logger.warning(f"Could not clear uploads folder: {exc}")
+        
         # Save PDF to uploads folder if provided (for RAG pipeline later)
         if pdf_contents and pdf_filename:
             try:
@@ -368,6 +383,46 @@ def register_callbacks(app) -> None:
         else:  # IDLE or unknown
             return "📊 Financials Only", {**base_style, "color": "#64748b", "background": "#f1f5f9"}, True
 
+    # ── 5b. Update chat header RAG message dynamically ───────────────────────
+    @app.callback(
+        Output("chat-rag-status-message", "children"),
+        Output("chat-rag-status-message", "style"),
+        Input("rag-status-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def cb_update_chat_rag_message(n_intervals):
+        """Update chat header message based on current RAG status."""
+        from dashboard.pipeline_runner import get_status, RAGStatus
+        
+        status = get_status()
+        rag_status = status.get("rag_status", RAGStatus.IDLE.value)
+        
+        base_style = {
+            "marginLeft": "auto", "fontSize": "11px",
+            "padding": "4px 12px", "borderRadius": "12px",
+            "fontWeight": "700",
+            "display": "block",
+        }
+        
+        if rag_status == RAGStatus.READY.value:
+            # Report is indexed - hide the message
+            return "", {**base_style, "display": "none"}
+        
+        elif rag_status == RAGStatus.IDLE.value:
+            # No report uploaded
+            return "📊 Answering from ratios only", {**base_style, "background": "#f59e0b20", "color": "#f59e0b", "display": "block"}
+        
+        elif rag_status in (RAGStatus.LOADING.value, RAGStatus.CHUNKING.value, RAGStatus.EMBEDDING.value, RAGStatus.STORING.value):
+            # Report is being indexed
+            return "📄 Processing report...", {**base_style, "background": "#12aada20", "color": "#12aada", "display": "block"}
+        
+        elif rag_status == RAGStatus.ERROR.value:
+            # Indexing failed
+            return "⚠️ Report error", {**base_style, "background": "#ef444420", "color": "#ef4444", "display": "block"}
+        
+        else:
+            return "", {**base_style, "display": "none"}
+
     # ── 6a. Send chat message (optimistic UI update) ───────────────────────
     @app.callback(
         Output("chat-messages",        "children",  allow_duplicate=True),
@@ -412,6 +467,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output("stream-interval",      "disabled", allow_duplicate=True),
         Output("streaming-response",   "data",     allow_duplicate=True),
+        Output("pending-chat-request", "data",     allow_duplicate=True),
         Input("pending-chat-request",  "data"),
         prevent_initial_call=True,
     )
@@ -433,26 +489,33 @@ def register_callbacks(app) -> None:
                 pass
         logger.debug(f"[START_STREAM] Cleared {cleared} items from queue")
 
-        # Initialize streaming response store
+        # Initialize streaming response store with timestamp for timeout detection
+        import time
         streaming_data = {
             "status": "streaming",
             "response": "",
             "request_data": request_data,
+            "start_time": time.time(),
+            "last_token_time": time.time(),
+            "poll_count": 0,
         }
 
         def _stream_worker():
             """Background thread to stream LLM response."""
+            import time as time_module
+            worker_start = time_module.time()
+            
             try:
                 question = request_data.get("question")
                 chat_history = request_data.get("chat_history", [])
                 conv_summary = request_data.get("conv_summary", "")
 
-                logger.info(f"[STREAM] Starting stream worker for question: {question[:60]}...")
+                logger.info(f"[STREAM] 🚀 Starting stream worker for question: {question[:60]}...")
 
                 # Load analysis
                 analysis_file = DATA_PROCESSED_DIR / "analysis.json"
                 if not analysis_file.exists():
-                    logger.error("[STREAM] Analysis file not found")
+                    logger.error("[STREAM] ❌ Analysis file not found")
                     _STREAM_QUEUE.put(("error", "Analysis file not found"))
                     return
 
@@ -460,6 +523,7 @@ def register_callbacks(app) -> None:
                     data = json.load(fh)
 
                 company = data.get("company", "Unknown")
+                logger.info(f"[STREAM] 📊 Company: {company}")
                 
                 # Use smart filtering to reduce token usage
                 analyzer = get_analyzer()
@@ -470,7 +534,6 @@ def register_callbacks(app) -> None:
                     f"({analysis_metadata['confidence']:.1%} confidence, "
                     f"categories: {', '.join(analysis_metadata['categories']) or 'none'})"
                 )
-                logger.debug(f"[STREAM] Loaded analysis for {company}")
 
                 # Get RAG status
                 from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
@@ -480,7 +543,7 @@ def register_callbacks(app) -> None:
                 # Map new granular RAG states to orchestrator states for compatibility
                 rag_status_for_orchestrator = rag_status_raw
                 if rag_status_raw in ("loading", "chunking", "embedding", "storing"):
-                    rag_status_for_orchestrator = "indexing"  # Group intermediate states as "indexing"
+                    rag_status_for_orchestrator = "indexing"
                 
                 rag_context = ""
                 rag_store_instance = get_rag_store()
@@ -496,27 +559,74 @@ def register_callbacks(app) -> None:
                 # Compress if needed
                 conv_summary = conv_summary or ""
                 if len(chat_history) > 10:
-                    logger.info(f"[STREAM] Chat history has {len(chat_history)} messages, skipping compression to save quota")
+                    logger.info(f"[STREAM] Chat history has {len(chat_history)} messages")
 
                 # Stream LLM response
                 from llm.orchestrator import LLMOrchestrator
                 orchestrator = LLMOrchestrator()
-                logger.info("[STREAM] Starting LLM streaming...")
+                logger.info("[STREAM] 📡 Starting LLM streaming (direct token mode)...")
 
                 token_count = 0
-                for token in orchestrator.chat_grounded_stream(
-                    question=question,
-                    company=company,
-                    financial_summary=financial_summary,
-                    rag_context=rag_context,
-                    conversation_summary=conv_summary,
-                    rag_status=rag_status_for_orchestrator
-                ):
-                    _STREAM_QUEUE.put(("token", token))
-                    token_count += 1
-
-                logger.info(f"[STREAM] LLM streaming complete. Total tokens: {token_count}")
-                _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+                stream_start = time_module.time()
+                first_token_logged = False
+                
+                try:
+                    for token in orchestrator.chat_grounded_stream(
+                        question=question,
+                        company=company,
+                        financial_summary=financial_summary,
+                        rag_context=rag_context,
+                        conversation_summary=conv_summary,
+                        rag_status=rag_status_for_orchestrator
+                    ):
+                        # Log first token arrival
+                        if token_count == 0:
+                            first_token_elapsed = time_module.time() - stream_start
+                            logger.info(f"[STREAM] ⚡ FIRST TOKEN in {first_token_elapsed:.3f}s: '{token[:30]}...'")
+                            first_token_logged = True
+                        
+                        # Queue the token
+                        _STREAM_QUEUE.put(("token", token))
+                        token_count += 1
+                        
+                        # Log progress every 20 tokens
+                        if token_count % 20 == 0:
+                            elapsed = time_module.time() - stream_start
+                            rate = token_count / (elapsed + 0.001)
+                            logger.debug(f"[STREAM] Progress: {token_count} tokens in {elapsed:.1f}s ({rate:.1f} t/s)")
+                        
+                        # Safety check - if generator produces nothing, timeout quickly
+                        if token is None or token == "":
+                            logger.warning(f"[STREAM] ⚠️ Empty token received at position {token_count}")
+                    
+                    if token_count == 0:
+                        logger.warning("[STREAM] ⚠️ NO TOKENS GENERATED - stream generator was empty")
+                        _STREAM_QUEUE.put(("error", "LLM generated no tokens (empty response)"))
+                        return
+                    
+                    elapsed_total = time_module.time() - stream_start
+                    logger.info(f"[STREAM] ✅ Streaming complete: {token_count} tokens in {elapsed_total:.2f}s")
+                    _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+                    
+                except StopIteration:
+                    logger.warning(f"[STREAM] Stream ended prematurely at {token_count} tokens")
+                    _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+                    
+                except Exception as stream_exc:
+                    logger.error(f"[STREAM] ❌ Exception during token streaming: {str(stream_exc)}", exc_info=True)
+                    _STREAM_QUEUE.put(("error", f"Streaming error: {str(stream_exc)[:100]}"))
+                    return
+                    
+            except Exception as exc:
+                error_msg = str(exc)
+                logger.error(f"[STREAM] ❌ Worker error: {error_msg}", exc_info=True)
+                
+                # Check if it's a quota exceeded error
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+                    logger.error("[STREAM] 🚫 QUOTA EXCEEDED: Gemini API free tier limit reached")
+                    _STREAM_QUEUE.put(("quota_exceeded", None))
+                else:
+                    _STREAM_QUEUE.put(("error", error_msg[:200]))
 
             except Exception as exc:
                 error_msg = str(exc)
@@ -534,8 +644,8 @@ def register_callbacks(app) -> None:
         thread.start()
         logger.info("[START_STREAM] Background streaming thread started, polling enabled")
 
-        # Enable interval polling and return initial state
-        return False, streaming_data
+        # Enable interval polling, clear pending request, return initial state
+        return False, streaming_data, None
 
     # ── 6c. Poll streaming tokens and update UI ────────────────────────────
     @app.callback(
@@ -554,35 +664,82 @@ def register_callbacks(app) -> None:
         if not streaming_data or streaming_data.get("status") != "streaming":
             raise PreventUpdate
 
-        # Collect ALL tokens from queue
+        import time
+        
+        current_time = time.time()
+        streaming_data["poll_count"] = streaming_data.get("poll_count", 0) + 1
+        poll_num = streaming_data["poll_count"]
+        
+        # CRITICAL: Log every poll to verify callback is firing
+        if poll_num == 1:
+            logger.info(f"[POLL] 🟢 FIRST POLL - Streaming started. Response len: {len(streaming_data.get('response', ''))} chars")
+        
+        if poll_num % 10 == 0:  # Every 1 second (10 polls at 100ms)
+            elapsed = current_time - streaming_data.get("start_time", current_time)
+            response_len = len(streaming_data.get("response", ""))
+            queue_size = _STREAM_QUEUE.qsize()
+            logger.info(f"[POLL] #{poll_num} @ {elapsed:.1f}s | Response: {response_len} chars | Queue: {queue_size} items")
+
+        # Detect timeouts
+        first_token_received = len(streaming_data.get("response", "")) > 0
+        time_since_start = current_time - streaming_data.get("start_time", current_time)
+        
+        if not first_token_received:
+            timeout_seconds = 15
+            if time_since_start > timeout_seconds:
+                queue_size = _STREAM_QUEUE.qsize()
+                logger.error(f"[POLL] ❌ TIMEOUT: No first token after {time_since_start:.1f}s. Queue size: {queue_size}")
+                error_msg = f"⏱️ Response timed out after {timeout_seconds}s (no tokens received). Queue had {queue_size} items. The API may be unreachable."
+                
+                chat_history_with_error = (chat_history or []) + [
+                    {"role": "user", "content": streaming_data["request_data"].get("question", "")},
+                    {"role": "assistant", "content": error_msg},
+                ]
+                
+                from dashboard.layout import _chat_bubble
+                message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_with_error]
+                
+                return (
+                    message_bubbles,
+                    True,  # Disable interval
+                    chat_history_with_error,
+                    no_update,
+                    None,  # Clear streaming data
+                )
+
+        # Check queue for incoming tokens/messages
+        queue_items = 0
         while not _STREAM_QUEUE.empty():
             try:
                 token_type, token_data = _STREAM_QUEUE.get_nowait()
-
+                queue_items += 1
+                
                 if token_type == "token":
                     streaming_data["response"] += token_data
-                    logger.debug(f"[POLL] Received token, response length: {len(streaming_data['response'])}")
+                    streaming_data["last_token_time"] = time.time()
+                    
+                    # Log first token arrival
+                    if len(streaming_data["response"]) == len(token_data):
+                        elapsed = time.time() - streaming_data.get("start_time", time.time())
+                        logger.info(f"[POLL] ⚡ FIRST TOKEN arrived after {elapsed:.2f}s: '{token_data[:40]}...'")
 
                 elif token_type == "done":
-                    # Streaming complete - finalize
+                    # Streaming finished successfully
                     final_response = streaming_data["response"]
                     chat_history_new = token_data.get("chat_history", chat_history or [])
                     conv_summary = token_data.get("conv_summary", "")
                     question = streaming_data["request_data"].get("question", "")
 
-                    logger.info(f"[POLL] Streaming complete. Final response length: {len(final_response)}")
+                    logger.info(f"[POLL] ✅ Done signal received. Final response: {len(final_response)} chars, {streaming_data['poll_count']} polls")
 
-                    # Save to history
                     chat_history_final = chat_history_new + [
                         {"role": "user", "content": question},
                         {"role": "assistant", "content": final_response},
                     ]
 
-                    # Rebuild all messages
                     from dashboard.layout import _chat_bubble
                     message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_final]
 
-                    logger.info(f"[POLL] Chat history saved with {len(chat_history_final)} messages")
                     return (
                         message_bubbles,
                         True,  # Disable interval
@@ -592,11 +749,9 @@ def register_callbacks(app) -> None:
                     )
 
                 elif token_type == "quota_exceeded":
-                    # API quota limit exceeded
-                    logger.error("[POLL] API quota exceeded - user needs to wait for reset or upgrade")
-                    error_msg = "API quota exceeded. Please try again later."
+                    logger.error("[POLL] 🚫 Quota exceeded error from worker")
+                    error_msg = "🚫 API quota exceeded. Please try again later or upgrade your plan."
                     
-                    # Build messages with error
                     chat_history_with_error = (chat_history or []) + [
                         {"role": "user", "content": streaming_data["request_data"].get("question", "")},
                         {"role": "assistant", "content": error_msg},
@@ -614,11 +769,9 @@ def register_callbacks(app) -> None:
                     )
 
                 elif token_type == "error":
-                    # Generic error occurred
-                    logger.error(f"[POLL] Stream error: {token_data}")
-                    error_msg = "An error occurred. Please try again."
+                    logger.error(f"[POLL] ❌ Error from worker: {token_data}")
+                    error_msg = f"❌ Error: {token_data}"
                     
-                    # Build messages with error
                     chat_history_with_error = (chat_history or []) + [
                         {"role": "user", "content": streaming_data["request_data"].get("question", "")},
                         {"role": "assistant", "content": error_msg},
@@ -636,21 +789,22 @@ def register_callbacks(app) -> None:
                     )
 
             except Exception as exc:
-                logger.warning(f"[POLL] Queue get error: {exc}", exc_info=True)
+                logger.warning(f"[POLL] Queue error: {exc}")
                 break
 
-        # ALWAYS update UI while streaming - show partial response as tokens arrive
+        if queue_items > 0:
+            logger.debug(f"[POLL] Processed {queue_items} queue item(s), response now: {len(streaming_data.get('response', ''))} chars")
+
+        # Continuous UI update while streaming
         from dashboard.layout import _chat_bubble, _loading_bubble
         
-        # Rebuild messages with current partial response
         chat_history = chat_history or []
         message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
         
-        # Add user message from pending request
         question = streaming_data["request_data"].get("question", "")
         message_bubbles.append(_chat_bubble("user", question))
         
-        # Add response - show loading if empty, otherwise show partial response
+        # Show partial response or loading indicator
         if streaming_data["response"]:
             message_bubbles.append(_chat_bubble("assistant", streaming_data["response"]))
         else:
