@@ -48,3 +48,10 @@ CSV_META = DATA_RAW_DIR / "meta.csv"
 DASHBOARD_HOST  = os.getenv("DASHBOARD_HOST", "0.0.0.0")
 DASHBOARD_PORT  = int(os.getenv("DASHBOARD_PORT", "8050"))
 DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
+
+# Chat streaming: max wait for first LLM token (slow / free-tier APIs).
+# Render: set LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT (seconds, minimum 30).
+STREAM_FIRST_TOKEN_TIMEOUT_SEC = max(
+    30,
+    int(os.getenv("LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT", "180")),
+)
