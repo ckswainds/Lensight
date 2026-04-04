@@ -10,6 +10,7 @@ Run
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -169,13 +170,15 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
 dash_app, fastapi_app = create_app()
 
 if __name__ == "__main__":
+    # Detect port: use PORT env var (Render/production) or DASHBOARD_PORT (local dev)
+    port = int(os.getenv("PORT", DASHBOARD_PORT))
     logger.info(
-        "Starting Lensight — http://%s:%s", DASHBOARD_HOST, DASHBOARD_PORT
+        "Starting Lensight — http://%s:%s", DASHBOARD_HOST, port
     )
     uvicorn.run(
         "dashboard.app:fastapi_app",
         host=DASHBOARD_HOST,
-        port=DASHBOARD_PORT,
+        port=port,
         reload=DASHBOARD_DEBUG,
         log_level="info",
     )
