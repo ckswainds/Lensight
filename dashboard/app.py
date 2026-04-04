@@ -73,6 +73,13 @@ def _initial_content():
 
 def create_app() -> tuple[dash.Dash, FastAPI]:
     logger.info("Initialising Lensight dashboard (FastAPI + upload flow)...")
+    if os.getenv("RENDER"):
+        logger.warning(
+            "Running on Render: use exactly 1 web instance (or attach a persistent disk "
+            "shared by all instances). Pipeline status is in-memory per process; the "
+            "on-disk analysis-ready marker only helps when all traffic sees the same "
+            "data/processed volume."
+        )
 
     initial_content, initial_screen = _initial_content()
 

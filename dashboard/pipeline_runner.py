@@ -9,6 +9,7 @@ callbacks poll every 500ms to update the loading screen.
 """
 
 import base64
+import json
 import logging
 import shutil
 import threading
@@ -20,6 +21,25 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+from constants import ANALYSIS_READY_FLAG
+
+
+def _analysis_ready_path(processed_dir: Path) -> Path:
+    """Same relative flag as ANALYSIS_READY_FLAG but under the active processed dir."""
+    return processed_dir / ANALYSIS_READY_FLAG.name
+
+
+def _write_analysis_ready_marker(processed_dir: Path) -> None:
+    """Signal that analysis.json is complete (for polling across workers)."""
+    path = _analysis_ready_path(processed_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ok": True,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    logger.info("Wrote analysis-ready marker: %s", path)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +268,10 @@ def run_pipeline(
         from analysis.json_formatter import JsonFormatter
         JsonFormatter(processed_dir).build(trend_result)
         logger.info("analysis.json written.")
+
+        # Disk marker first so any worker/instance reading the same filesystem
+        # can redirect even if this process's in-memory _status is not polled.
+        _write_analysis_ready_marker(processed_dir)
 
         # ── SIGNAL CORE DONE ─────────────────────────────────────
         # Mark core analysis as DONE so the UI redirects to the dashboard.

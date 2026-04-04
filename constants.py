@@ -22,6 +22,11 @@ DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_PROCESSED_DIR = DATA_DIR / "processed"
 DATA_VECTOR_STORE_DIR = DATA_DIR / "vector_store"
 
+# Written when core analysis finishes (after analysis.json). Used by the
+# dashboard poll callback to detect completion when in-memory PipelineStatus
+# is stale (e.g. multiple workers / instances on Render).
+ANALYSIS_READY_FLAG = DATA_PROCESSED_DIR / ".lensight_analysis_ready"
+
 
 # ─────────────────────────────────────────────────────────────────
 # Logging

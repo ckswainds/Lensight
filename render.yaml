@@ -1,0 +1,11 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Critical: numInstances must stay 1 unless you add a persistent disk mounted at
+# the project data/ path for every instance. Pipeline state lives in RAM per process.
+
+services:
+  - type: web
+    name: lensight
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn dashboard.app:fastapi_app --host 0.0.0.0 --port $PORT
+    numInstances: 1

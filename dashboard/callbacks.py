@@ -85,7 +85,12 @@ def register_callbacks(app) -> None:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-    from constants import DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR
+    from constants import (
+        DATA_UPLOADS_DIR,
+        DATA_RAW_DIR,
+        DATA_PROCESSED_DIR,
+        ANALYSIS_READY_FLAG,
+    )
     from dashboard.pipeline_runner import start_pipeline, get_status, Stage, RAGStatus
     from dashboard.layout import (
         build_upload_screen,
@@ -253,9 +258,38 @@ def register_callbacks(app) -> None:
 
         company_text = f"Analysing: {company}" if company else "Preparing analysis..."
 
+        analysis_file = DATA_PROCESSED_DIR / "analysis.json"
+
+        # Render / multi-worker: upload + pipeline may run on instance A while
+        # Dash polls hit instance B — _status stays on "ratios" forever. If the
+        # filesystem is shared (or we're on the same box), the ready marker +
+        # analysis.json prove completion.
+        if stage not in (Stage.DONE.value, Stage.ERROR.value):
+            if analysis_file.exists() and ANALYSIS_READY_FLAG.exists():
+                try:
+                    marker = json.loads(ANALYSIS_READY_FLAG.read_text(encoding="utf-8"))
+                    if marker.get("ok"):
+                        with analysis_file.open(encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        logger.info(
+                            "Pipeline completion via on-disk marker — dashboard for '%s'",
+                            data.get("company", ""),
+                        )
+                        return (
+                            build_layout(data),
+                            {"screen": "dashboard"},
+                            True,
+                            100,
+                            "Analysis complete!",
+                            company_text,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "On-disk completion check failed (will keep polling): %s", exc
+                    )
+
         if stage == Stage.DONE.value:
             # Pipeline finished — load analysis and switch to dashboard
-            analysis_file = DATA_PROCESSED_DIR / "analysis.json"
             try:
                 with analysis_file.open(encoding="utf-8") as fh:
                     data = json.load(fh)
