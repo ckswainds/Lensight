@@ -630,7 +630,10 @@ def register_callbacks(app) -> None:
                 token_count = 0
                 stream_start = time_module.time()
                 first_token_logged = False
-                
+                # Full text on the worker — required when load balancers send polls to
+                # different instances than the worker (empty queue + empty client state).
+                assistant_chunks: list[str] = []
+
                 # Call the generator
                 try:
                     logger.info("[STREAM] Calling orchestrator.chat_grounded_stream()...")
@@ -650,7 +653,7 @@ def register_callbacks(app) -> None:
                     _STREAM_QUEUE.put(("error", f"Generator creation failed: {str(gen_exc)[:100]}"))
                     print(f"[STREAM_WORKER] Generator creation error: {gen_exc}")
                     return
-                
+
                 try:
                     for token in generator:
                         print(f"[STREAM_WORKER_TOKEN] Received token #{token_count + 1}: {token[:30]}")
@@ -660,8 +663,11 @@ def register_callbacks(app) -> None:
                             first_token_elapsed = time_module.time() - stream_start
                             logger.info(f"[STREAM] ⚡ FIRST TOKEN in {first_token_elapsed:.3f}s: '{token[:30]}...'")
                             print(f"[STREAM_WORKER] FIRST TOKEN in {first_token_elapsed:.3f}s")
-                        
-                        # Queue the token
+
+                        if token:
+                            assistant_chunks.append(token)
+
+                        # Queue the token (UI may still stream on same instance)
                         _STREAM_QUEUE.put(("token", token))
                         token_count += 1
                         
@@ -671,7 +677,6 @@ def register_callbacks(app) -> None:
                             rate = token_count / (elapsed + 0.001)
                             logger.debug(f"[STREAM] Progress: {token_count} tokens in {elapsed:.1f}s ({rate:.1f} t/s)")
                         
-                        # Safety check - if generator produces nothing, timeout quickly
                         if token is None or token == "":
                             logger.warning(f"[STREAM] ⚠️ Empty token received at position {token_count}")
                     
@@ -683,8 +688,18 @@ def register_callbacks(app) -> None:
                         return
                     
                     elapsed_total = time_module.time() - stream_start
+                    assistant_text = "".join(assistant_chunks)
                     logger.info(f"[STREAM] ✅ Streaming complete: {token_count} tokens in {elapsed_total:.2f}s")
-                    _STREAM_QUEUE.put(("done", {"chat_history": chat_history, "conv_summary": conv_summary}))
+                    _STREAM_QUEUE.put(
+                        (
+                            "done",
+                            {
+                                "chat_history": chat_history,
+                                "conv_summary": conv_summary,
+                                "assistant_text": assistant_text,
+                            },
+                        )
+                    )
                     print("[STREAM_WORKER] Done message queued")
                     
                 except Exception as stream_exc:
@@ -811,13 +826,19 @@ def register_callbacks(app) -> None:
                         logger.info(f"[POLL] ⚡ FIRST TOKEN arrived after {elapsed:.2f}s: '{token_data[:40]}...'")
 
                 elif token_type == "done":
-                    # Streaming finished successfully
-                    final_response = streaming_data["response"]
+                    # Prefer full text from worker (survives multi-instance / empty local queue).
+                    from_client = streaming_data.get("response", "") or ""
+                    from_worker = (token_data or {}).get("assistant_text") or ""
+                    final_response = from_worker if from_worker else from_client
                     chat_history_new = token_data.get("chat_history", chat_history or [])
                     conv_summary = token_data.get("conv_summary", "")
                     question = streaming_data["request_data"].get("question", "")
 
-                    logger.info(f"[POLL] ✅ Done signal received. Final response: {len(final_response)} chars, {streaming_data['poll_count']} polls")
+                    logger.info(
+                        f"[POLL] ✅ Done signal received. Final response: {len(final_response)} chars "
+                        f"(worker={len(from_worker)}, client={len(from_client)}), "
+                        f"polls={streaming_data['poll_count']}"
+                    )
 
                     chat_history_final = chat_history_new + [
                         {"role": "user", "content": question},
