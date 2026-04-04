@@ -90,6 +90,7 @@ def register_callbacks(app) -> None:
         DATA_RAW_DIR,
         DATA_PROCESSED_DIR,
         ANALYSIS_READY_FLAG,
+        STREAM_FIRST_TOKEN_TIMEOUT_SEC,
     )
     from dashboard.pipeline_runner import start_pipeline, get_status, Stage, RAGStatus
     from dashboard.layout import (
@@ -766,11 +767,16 @@ def register_callbacks(app) -> None:
         time_since_start = current_time - streaming_data.get("start_time", current_time)
         
         if not first_token_received:
-            timeout_seconds = 15
+            timeout_seconds = STREAM_FIRST_TOKEN_TIMEOUT_SEC
             if time_since_start > timeout_seconds:
                 queue_size = _STREAM_QUEUE.qsize()
                 logger.error(f"[POLL] ❌ TIMEOUT: No first token after {time_since_start:.1f}s. Queue size: {queue_size}")
-                error_msg = f"⏱️ Response timed out after {timeout_seconds}s (no tokens received). Queue had {queue_size} items. The API may be unreachable."
+                error_msg = (
+                    f"⏱️ Response timed out after {timeout_seconds}s (no tokens yet). "
+                    f"Queue had {queue_size} items. "
+                    f"Slow or free-tier APIs may need longer — set env LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT "
+                    f"(seconds, min 30), e.g. 300."
+                )
                 
                 chat_history_with_error = (chat_history or []) + [
                     {"role": "user", "content": streaming_data["request_data"].get("question", "")},

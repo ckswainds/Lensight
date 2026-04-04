@@ -2,6 +2,8 @@
 
 import json
 import logging
+from typing import Any
+
 from llm.narrative_generator import NarrativeGenerator
 from llm.prompt_builder import PromptBuilder
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -12,6 +14,33 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of messages before compressing history
 _MAX_MESSAGES = 10
+
+
+def _stringify_chunk_content(content: Any) -> str:
+    """
+    LangChain / Gemini stream chunks may use str, list[str], or list[dict] blocks.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                t = item.get("text")
+                if isinstance(t, str):
+                    parts.append(t)
+                else:
+                    c = item.get("content")
+                    if isinstance(c, str):
+                        parts.append(c)
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(content)
 
 
 class LLMOrchestrator:
@@ -187,35 +216,50 @@ class LLMOrchestrator:
             token_count = 0
             start_time = time.time()
             first_token_time = None
-            accumulated_response = ""  # Track cumulative response to extract deltas
-            
-            # **DIRECT STREAMING FROM LLM** - extracts delta tokens from accumulated chunks
-            logger.debug("[STREAM] Starting direct LLM stream (token-delta extraction mode)")
+            accumulated_response = ""
+
+            # Gemini often sends *incremental* pieces; some providers send *cumulative* text.
+            # Old logic assumed only cumulative (len(new) > len(old)), which drops most chunks.
+            logger.debug("[STREAM] Starting LLM stream (cumulative + incremental chunk handling)")
             for chunk in self.chat_llm.stream(prompt_messages):
-                # Each chunk is an AIMessage with `.content` = accumulated response so far
-                chunk_content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                
-                # Extract ONLY the new content (delta) since last chunk
-                if len(chunk_content) > len(accumulated_response):
-                    delta = chunk_content[len(accumulated_response):]
-                    accumulated_response = chunk_content
-                    
-                    # Track timing of first token
-                    if token_count == 0:
-                        first_token_time = time.time()
-                        elapsed = first_token_time - start_time
-                        logger.info(f"[STREAM] ⚡ FIRST CHUNK after {elapsed:.3f}s, delta: '{delta[:30]}...'")
-                    
-                    token_count += 1
-                    
-                    # Yield only the delta (new content)
-                    yield delta
-                    
-                    # Log every 10 deltas for diagnostics
-                    if token_count % 10 == 0:
-                        elapsed = time.time() - start_time
-                        rate = len(accumulated_response) / (elapsed + 0.001)
-                        logger.debug(f"[STREAM] Chunk #{token_count}, accumulated: {len(accumulated_response)} chars, rate: {rate:.1f} chars/sec")
+                raw = getattr(chunk, "content", None)
+                if raw is None:
+                    raw = chunk
+                text = _stringify_chunk_content(raw)
+                if not text:
+                    continue
+
+                if accumulated_response and text.startswith(accumulated_response):
+                    delta = text[len(accumulated_response) :]
+                    accumulated_response = text
+                elif not accumulated_response:
+                    delta = text
+                    accumulated_response = text
+                else:
+                    # Incremental token / segment — append (does not repeat prior prefix)
+                    delta = text
+                    accumulated_response += text
+
+                if not delta:
+                    continue
+
+                if token_count == 0:
+                    first_token_time = time.time()
+                    elapsed = first_token_time - start_time
+                    logger.info(
+                        f"[STREAM] ⚡ FIRST CHUNK after {elapsed:.3f}s, delta: '{delta[:40]}...'"
+                    )
+
+                token_count += 1
+                yield delta
+
+                if token_count % 25 == 0:
+                    elapsed = time.time() - start_time
+                    rate = len(accumulated_response) / (elapsed + 0.001)
+                    logger.debug(
+                        f"[STREAM] Chunk #{token_count}, accumulated: {len(accumulated_response)} chars, "
+                        f"rate: {rate:.1f} chars/sec"
+                    )
             
             elapsed_total = time.time() - start_time
             logger.info(f"[STREAM] ✓ Streaming complete. Chunks: {token_count}, Total: {len(accumulated_response)} chars, Time: {elapsed_total:.2f}s")
