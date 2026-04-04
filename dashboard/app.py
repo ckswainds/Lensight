@@ -37,7 +37,7 @@ from dashboard.callbacks import register_callbacks
 # Attach handlers to the "dashboard" package logger, not only dashboard.app.
 # Otherwise dashboard.callbacks / dashboard.pipeline_runner propagate to a parent
 # with no handlers, then to root — which uvicorn often leaves without INFO
-# handlers — so upload + pipeline logs never appear on Render.
+# handlers — so upload + pipeline logs never appear in hosted logs (Railway, Render, etc.).
 
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 _fmt = logging.Formatter(
@@ -63,6 +63,16 @@ logger = logging.getLogger(__name__)
 _ANALYSIS_FILE = DATA_PROCESSED_DIR / "analysis.json"
 
 
+def _hosted_paas_detected() -> bool:
+    """True when running on common PaaS (used for one-time deploy hints in logs)."""
+    return bool(
+        os.getenv("RAILWAY_ENVIRONMENT")
+        or os.getenv("RAILWAY_PROJECT_ID")
+        or os.getenv("RENDER")
+        or os.getenv("FLY_APP_NAME")
+    )
+
+
 # ── Determine initial screen ───────────────────────────────────────────────────
 
 def _initial_content():
@@ -80,12 +90,12 @@ def _initial_content():
 
 def create_app() -> tuple[dash.Dash, FastAPI]:
     logger.info("Initialising Lensight dashboard (FastAPI + upload flow)...")
-    if os.getenv("RENDER"):
+    if _hosted_paas_detected():
         logger.warning(
-            "Running on Render: use exactly 1 web instance (or attach a persistent disk "
-            "shared by all instances). Pipeline status is in-memory per process; the "
-            "on-disk analysis-ready marker only helps when all traffic sees the same "
-            "data/processed volume."
+            "Hosted deployment: keep this service at 1 replica/instance (Railway scaling, "
+            "Render instances, etc.) unless every replica shares the same persistent disk for "
+            "data/. Pipeline and chat streaming use in-process memory and a local queue; "
+            "the analysis-ready file helps only when all requests hit the same filesystem."
         )
 
     initial_content, initial_screen = _initial_content()
@@ -184,7 +194,7 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
 dash_app, fastapi_app = create_app()
 
 if __name__ == "__main__":
-    # Detect port: use PORT env var (Render/production) or DASHBOARD_PORT (local dev)
+    # PORT is set by Railway, Render, Fly, etc.; fall back to DASHBOARD_PORT locally.
     port = int(os.getenv("PORT", DASHBOARD_PORT))
     logger.info(
         "Starting Lensight — http://%s:%s", DASHBOARD_HOST, port

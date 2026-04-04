@@ -24,7 +24,7 @@ DATA_VECTOR_STORE_DIR = DATA_DIR / "vector_store"
 
 # Written when core analysis finishes (after analysis.json). Used by the
 # dashboard poll callback to detect completion when in-memory PipelineStatus
-# is stale (e.g. multiple workers / instances on Render).
+# is stale (e.g. multiple replicas / workers on Railway, Render, etc.).
 ANALYSIS_READY_FLAG = DATA_PROCESSED_DIR / ".lensight_analysis_ready"
 
 
@@ -50,7 +50,7 @@ DASHBOARD_PORT  = int(os.getenv("DASHBOARD_PORT", "8050"))
 DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
 
 # Chat streaming: max wait for first LLM token (slow / free-tier APIs).
-# Render: set LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT (seconds, minimum 30).
+# Hosted: set LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT (seconds, minimum 30).
 STREAM_FIRST_TOKEN_TIMEOUT_SEC = max(
     30,
     int(os.getenv("LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT", "180")),

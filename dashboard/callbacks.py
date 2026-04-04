@@ -261,8 +261,8 @@ def register_callbacks(app) -> None:
 
         analysis_file = DATA_PROCESSED_DIR / "analysis.json"
 
-        # Render / multi-worker: upload + pipeline may run on instance A while
-        # Dash polls hit instance B — _status stays on "ratios" forever. If the
+        # Load-balanced hosting: pipeline runs on replica A while Dash polls hit B —
+        # _status can stay on "ratios". If the
         # filesystem is shared (or we're on the same box), the ready marker +
         # analysis.json prove completion.
         if stage not in (Stage.DONE.value, Stage.ERROR.value):
