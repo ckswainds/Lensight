@@ -30,5 +30,3 @@ template.py
 /test_streaming_diagnostic.py
 
 # Readmes and markdown files (not required in production)
-README.md
-*.md
