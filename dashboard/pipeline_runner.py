@@ -357,6 +357,8 @@ def start_pipeline(
                 file_content_b64, filename,
                 uploads_dir, raw_dir, processed_dir,
             )
+        except Exception:
+            logger.exception("Pipeline worker exited with uncaught exception")
         finally:
             _running.release()
 

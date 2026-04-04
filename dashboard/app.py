@@ -34,24 +34,31 @@ from dashboard.layout import build_upload_screen, build_layout, build_error_layo
 from dashboard.callbacks import register_callbacks
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+# Attach handlers to the "dashboard" package logger, not only dashboard.app.
+# Otherwise dashboard.callbacks / dashboard.pipeline_runner propagate to a parent
+# with no handlers, then to root — which uvicorn often leaves without INFO
+# handlers — so upload + pipeline logs never appear on Render.
 
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-_fh = logging.FileHandler(LOGS_DIR / "dashboard.log", mode="a", encoding="utf-8")
-_fh.setLevel(logging.DEBUG)
-_ch = logging.StreamHandler()
-_ch.setLevel(logging.INFO)
 _fmt = logging.Formatter(
     "%(asctime)s | %(name)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+_fh = logging.FileHandler(LOGS_DIR / "dashboard.log", mode="a", encoding="utf-8")
+_fh.setLevel(logging.DEBUG)
 _fh.setFormatter(_fmt)
+_ch = logging.StreamHandler()
+_ch.setLevel(logging.INFO)
 _ch.setFormatter(_fmt)
-if not logger.handlers:
-    logger.addHandler(_fh)
-    logger.addHandler(_ch)
+
+_pkg_log = logging.getLogger("dashboard")
+_pkg_log.setLevel(logging.DEBUG)
+if not _pkg_log.handlers:
+    _pkg_log.addHandler(_fh)
+    _pkg_log.addHandler(_ch)
+_pkg_log.propagate = False
+
+logger = logging.getLogger(__name__)
 
 _ANALYSIS_FILE = DATA_PROCESSED_DIR / "analysis.json"
 
