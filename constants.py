@@ -53,5 +53,5 @@ DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
 # Hosted: set LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT (seconds, minimum 30).
 STREAM_FIRST_TOKEN_TIMEOUT_SEC = max(
     30,
-    int(os.getenv("LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT", "180")),
-)
+    int(os.getenv("LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT", "300")),
+)

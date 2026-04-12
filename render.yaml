@@ -8,5 +8,6 @@ services:
     name: lensight
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn dashboard.app:fastapi_app --host 0.0.0.0 --port $PORT
+    startCommand: python -m uvicorn dashboard.app:fastapi_app --host 0.0.0.0 --port $PORT --workers 1
+
     numInstances: 1

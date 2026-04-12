@@ -204,5 +204,6 @@ if __name__ == "__main__":
         host=DASHBOARD_HOST,
         port=port,
         reload=DASHBOARD_DEBUG,
+        workers=1,
         log_level="info",
-    )
+    )

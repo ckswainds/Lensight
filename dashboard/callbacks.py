@@ -34,7 +34,9 @@ import base64
 import json
 import logging
 import sys
+import os
 import threading
+import time
 from pathlib import Path
 from queue import Queue
 
@@ -537,14 +539,18 @@ def register_callbacks(app) -> None:
 
         def _stream_worker():
             """Background thread to stream LLM response."""
-            import time as time_module
-            worker_start = time_module.time()
+            worker_start = time.time()
+            worker_pid = os.getpid()
+            
+            # CRITICAL: Send immediate signal that worker is alive
+            _STREAM_QUEUE.put(("ping", worker_pid))
             
             # CRITICAL: Log that the thread actually started
-            print(f"[STREAM_WORKER_STARTED] 🚀 Thread execution begun at {worker_start}")
-            logger.info(f"[STREAM] 🚀 Thread started. Request queue size: {_STREAM_QUEUE.qsize()}")
+            print(f"[STREAM_WORKER_STARTED] 🚀 Thread begun at {worker_start} (PID: {worker_pid})")
+            logger.info(f"[STREAM] 🚀 Thread started on PID {worker_pid}. Request queue size: {_STREAM_QUEUE.qsize()}")
             
             try:
+
                 question = request_data.get("question")
                 chat_history = request_data.get("chat_history", [])
                 conv_summary = request_data.get("conv_summary", "")
@@ -628,8 +634,9 @@ def register_callbacks(app) -> None:
                 print("[STREAM_WORKER] Orchestrator created, calling stream...")
 
                 token_count = 0
-                stream_start = time_module.time()
+                stream_start = time.time()
                 first_token_logged = False
+
                 # Full text on the worker — required when load balancers send polls to
                 # different instances than the worker (empty queue + empty client state).
                 assistant_chunks: list[str] = []
@@ -660,9 +667,10 @@ def register_callbacks(app) -> None:
                         
                         # Log first token arrival
                         if token_count == 0:
-                            first_token_elapsed = time_module.time() - stream_start
+                            first_token_elapsed = time.time() - stream_start
                             logger.info(f"[STREAM] ⚡ FIRST TOKEN in {first_token_elapsed:.3f}s: '{token[:30]}...'")
                             print(f"[STREAM_WORKER] FIRST TOKEN in {first_token_elapsed:.3f}s")
+
 
                         if token:
                             assistant_chunks.append(token)
@@ -673,9 +681,10 @@ def register_callbacks(app) -> None:
                         
                         # Log progress every 20 tokens
                         if token_count % 20 == 0:
-                            elapsed = time_module.time() - stream_start
+                            elapsed = time.time() - stream_start
                             rate = token_count / (elapsed + 0.001)
                             logger.debug(f"[STREAM] Progress: {token_count} tokens in {elapsed:.1f}s ({rate:.1f} t/s)")
+
                         
                         if token is None or token == "":
                             logger.warning(f"[STREAM] ⚠️ Empty token received at position {token_count}")
@@ -687,7 +696,8 @@ def register_callbacks(app) -> None:
                         print("[STREAM_WORKER] No tokens generated")
                         return
                     
-                    elapsed_total = time_module.time() - stream_start
+                    elapsed_total = time.time() - stream_start
+
                     assistant_text = "".join(assistant_chunks)
                     logger.info(f"[STREAM] ✅ Streaming complete: {token_count} tokens in {elapsed_total:.2f}s")
                     _STREAM_QUEUE.put(
@@ -775,7 +785,8 @@ def register_callbacks(app) -> None:
             elapsed = current_time - streaming_data.get("start_time", current_time)
             response_len = len(streaming_data.get("response", ""))
             queue_size = _STREAM_QUEUE.qsize()
-            logger.info(f"[POLL] #{poll_num} @ {elapsed:.1f}s | Response: {response_len} chars | Queue: {queue_size} items")
+            logger.info(f"[POLL] #{poll_num} (PID: {os.getpid()}) @ {elapsed:.1f}s | Response: {response_len} chars | Queue: {queue_size} items")
+
 
         # Detect timeouts
         first_token_received = len(streaming_data.get("response", "")) > 0
@@ -783,15 +794,20 @@ def register_callbacks(app) -> None:
         
         if not first_token_received:
             timeout_seconds = STREAM_FIRST_TOKEN_TIMEOUT_SEC
+            worker_alive = streaming_data.get("worker_alive", False)
+            
             if time_since_start > timeout_seconds:
                 queue_size = _STREAM_QUEUE.qsize()
-                logger.error(f"[POLL] ❌ TIMEOUT: No first token after {time_since_start:.1f}s. Queue size: {queue_size}")
+                logger.error(f"[POLL] ❌ TIMEOUT: No first token after {time_since_start:.1f}s. Worker Alive: {worker_alive}. Queue size: {queue_size}")
+                
+                status_msg = "Worker started but no tokens yet." if worker_alive else "Worker failed to start or process mismatch."
                 error_msg = (
                     f"⏱️ Response timed out after {timeout_seconds}s (no tokens yet). "
-                    f"Queue had {queue_size} items. "
-                    f"Slow or free-tier APIs may need longer — set env LENSIGHT_STREAM_FIRST_TOKEN_TIMEOUT "
-                    f"(seconds, min 30), e.g. 300."
+                    f"({status_msg}) "
+                    f"Queue had {queue_size} items. PID: {os.getpid()}. "
+                    f"Check if you have multiple workers running (WEB_CONCURRENCY > 1)."
                 )
+
                 
                 chat_history_with_error = (chat_history or []) + [
                     {"role": "user", "content": streaming_data["request_data"].get("question", "")},
@@ -816,7 +832,14 @@ def register_callbacks(app) -> None:
                 token_type, token_data = _STREAM_QUEUE.get_nowait()
                 queue_items += 1
                 
-                if token_type == "token":
+                if token_type == "ping":
+                    # SIGNAL: Worker thread has started in some process
+                    streaming_data["worker_alive"] = True
+                    streaming_data["last_token_time"] = time.time()  # Reset timeout timer
+                    logger.info(f"[POLL] 📡 PING received from worker (Worker PID: {token_data}, Poll PID: {os.getpid()})")
+                
+                elif token_type == "token":
+
                     streaming_data["response"] += token_data
                     streaming_data["last_token_time"] = time.time()
                     
