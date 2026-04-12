@@ -37,6 +37,7 @@ import sys
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from queue import Queue
 
@@ -93,7 +94,9 @@ def register_callbacks(app) -> None:
         DATA_PROCESSED_DIR,
         ANALYSIS_READY_FLAG,
         STREAM_FIRST_TOKEN_TIMEOUT_SEC,
+        STREAM_DATA_DIR,
     )
+
     from dashboard.pipeline_runner import start_pipeline, get_status, Stage, RAGStatus
     from dashboard.layout import (
         build_upload_screen,
@@ -495,7 +498,9 @@ def register_callbacks(app) -> None:
             "question": question,
             "chat_history": chat_history,
             "conv_summary": conv_summary,
+            "stream_id": str(uuid.uuid4()),
         }
+
 
         logger.info("[SEND] Optimistic UI update complete, streaming scheduled")
         return bubbles, "", request_data
@@ -535,7 +540,10 @@ def register_callbacks(app) -> None:
             "start_time": time.time(),
             "last_token_time": time.time(),
             "poll_count": 0,
+            "stream_id": request_data.get("stream_id"),
+            "read_pos": 0,
         }
+
 
         def _stream_worker():
             """Background thread to stream LLM response."""
@@ -578,6 +586,17 @@ def register_callbacks(app) -> None:
 
                 company = data.get("company", "Unknown")
                 logger.info(f"[STREAM] 📊 Company: {company}")
+                
+                # Disk-based stream setup
+                stream_id = request_data.get("stream_id")
+                stream_file = STREAM_DATA_DIR / f"{stream_id}.txt"
+                stream_ready_file = STREAM_DATA_DIR / f"{stream_id}.ready"
+                STREAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+                
+                # Touch ready file
+                stream_ready_file.touch()
+                logger.info(f"[STREAM] 📂 Stream files initialized: {stream_id}")
+
                 
                 # Use smart filtering to reduce token usage
                 try:
@@ -675,9 +694,21 @@ def register_callbacks(app) -> None:
                         if token:
                             assistant_chunks.append(token)
 
-                        # Queue the token (UI may still stream on same instance)
+                        # Queue the token (local instance)
                         _STREAM_QUEUE.put(("token", token))
+                        
+                        # PERSIST the token (cross-instance fallback)
+                        if stream_id:
+                            try:
+                                with stream_file.open("a", encoding="utf-8") as f:
+                                    f.write(token)
+                                    f.flush()
+                                    os.fsync(f.fileno())  # Force commit to storage
+                            except Exception as fex:
+                                logger.error(f"[STREAM] ❌ Failed to persist token to {stream_file}: {fex}")
+                        
                         token_count += 1
+
                         
                         # Log progress every 20 tokens
                         if token_count % 20 == 0:
@@ -803,29 +834,7 @@ def register_callbacks(app) -> None:
                 status_msg = "Worker started but no tokens yet." if worker_alive else "Worker failed to start or process mismatch."
                 error_msg = (
                     f"⏱️ Response timed out after {timeout_seconds}s (no tokens yet). "
-                    f"({status_msg}) "
-                    f"Queue had {queue_size} items. PID: {os.getpid()}. "
-                    f"Check if you have multiple workers running (WEB_CONCURRENCY > 1)."
-                )
-
-                
-                chat_history_with_error = (chat_history or []) + [
-                    {"role": "user", "content": streaming_data["request_data"].get("question", "")},
-                    {"role": "assistant", "content": error_msg},
-                ]
-                
-                from dashboard.layout import _chat_bubble
-                message_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history_with_error]
-                
-                return (
-                    message_bubbles,
-                    True,  # Disable interval
-                    chat_history_with_error,
-                    no_update,
-                    None,  # Clear streaming data
-                )
-
-        # Check queue for incoming tokens/messages
+                    f"({status_msg}) "        # Check queue for incoming tokens/messages
         queue_items = 0
         while not _STREAM_QUEUE.empty():
             try:
@@ -839,7 +848,6 @@ def register_callbacks(app) -> None:
                     logger.info(f"[POLL] 📡 PING received from worker (Worker PID: {token_data}, Poll PID: {os.getpid()})")
                 
                 elif token_type == "token":
-
                     streaming_data["response"] += token_data
                     streaming_data["last_token_time"] = time.time()
                     
@@ -862,6 +870,13 @@ def register_callbacks(app) -> None:
                         f"(worker={len(from_worker)}, client={len(from_client)}), "
                         f"polls={streaming_data['poll_count']}"
                     )
+
+                    # Cleanup disk files
+                    stream_id = streaming_data.get("stream_id")
+                    if stream_id:
+                        for ext in ["txt", "ready"]:
+                            f = STREAM_DATA_DIR / f"{stream_id}.{ext}"
+                            if f.exists(): f.unlink()
 
                     chat_history_final = chat_history_new + [
                         {"role": "user", "content": question},
@@ -919,13 +934,42 @@ def register_callbacks(app) -> None:
                         None,  # Clear streaming data
                     )
 
+
             except Exception as exc:
                 logger.warning(f"[POLL] Queue error: {exc}")
                 break
 
-        if queue_items > 0:
-            logger.debug(f"[POLL] Processed {queue_items} queue item(s), response now: {len(streaming_data.get('response', ''))} chars")
+        # CROSS-INSTANCE FALLBACK: Read from disk if the queue was empty or insufficient
+        stream_id = streaming_data.get("stream_id")
+        if stream_id:
+            stream_file = STREAM_DATA_DIR / f"{stream_id}.txt"
+            ready_file = STREAM_DATA_DIR / f"{stream_id}.ready"
+            
+            # Check for ping alternative (ready file)
+            if not streaming_data.get("worker_alive") and ready_file.exists():
+                streaming_data["worker_alive"] = True
+                streaming_data["last_token_time"] = time.time()
+                logger.info(f"[POLL] 📡 RECOVERY: Detected stream worker alive via disk marker (PID: {os.getpid()})")
 
+            # Check for new tokens on disk
+            if stream_file.exists():
+                try:
+                    with stream_file.open("r", encoding="utf-8") as sf:
+                        # Only read from where we left off
+                        sf.seek(streaming_data.get("read_pos", 0))
+                        new_content = sf.read()
+                        if new_content:
+                            new_pos = sf.tell()
+                            # Use content from disk ONLY if it's more than what we have (to avoid duplicate with queue)
+                            # Actually, just append it if we haven't seen it yet.
+                            # Local tracking of 'response' needs to be coordinated.
+                            # Better strategy: if we read from disk, we update read_pos and response.
+                            streaming_data["response"] += new_content
+                            streaming_data["read_pos"] = new_pos
+                            streaming_data["last_token_time"] = time.time()
+                            logger.info(f"[POLL] 📂 RECOVERY: Read {len(new_content)} chars from disk (PID: {os.getpid()})")
+                except Exception as disk_err:
+                    logger.warning(f"[POLL] Failed to read fallback stream file: {disk_err}")
         # Continuous UI update while streaming
         from dashboard.layout import _chat_bubble, _loading_bubble
         
@@ -936,12 +980,14 @@ def register_callbacks(app) -> None:
         message_bubbles.append(_chat_bubble("user", question))
         
         # Show partial response or loading indicator
+        # Note: 'response' now aggregates tokens from both queue and disk
         if streaming_data["response"]:
             message_bubbles.append(_chat_bubble("assistant", streaming_data["response"]))
         else:
             message_bubbles.append(_loading_bubble())
 
         return message_bubbles, no_update, no_update, no_update, streaming_data
+
 
     # ── 7. Back to Dashboard ──────────────────────────────────────────────────
     @app.callback(

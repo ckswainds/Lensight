@@ -21,6 +21,8 @@ DATA_UPLOADS_DIR = DATA_DIR / "uploads"
 DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_PROCESSED_DIR = DATA_DIR / "processed"
 DATA_VECTOR_STORE_DIR = DATA_DIR / "vector_store"
+STREAM_DATA_DIR = DATA_PROCESSED_DIR / "streams"
+
 
 # Written when core analysis finishes (after analysis.json). Used by the
 # dashboard poll callback to detect completion when in-memory PipelineStatus
