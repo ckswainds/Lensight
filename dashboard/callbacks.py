@@ -45,12 +45,7 @@ from dash.exceptions import PreventUpdate
 
 from llm.query_analyzer import get_analyzer
 
-logger = logging.getLogger(__name__)
 
-# In-memory result store keyed by stream_id.
-# Safe with --workers 1 (Railway/Render default). Each entry is set by the
-# background worker and read+deleted by the poll callback.
-_STREAM_RESULTS: dict = {}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,6 +90,7 @@ def register_callbacks(app) -> None:
         DATA_PROCESSED_DIR,
         ANALYSIS_READY_FLAG,
         STREAM_FIRST_TOKEN_TIMEOUT_SEC,
+        STREAM_DATA_DIR,
     )
 
     from dashboard.pipeline_runner import start_pipeline, get_status, Stage, RAGStatus
@@ -511,10 +507,12 @@ def register_callbacks(app) -> None:
         stream_id = request_data["stream_id"]
         logger.info(f"[START_STREAM] stream_id={stream_id}")
 
-        # Register a pending slot so the poller knows work is in progress
-        _STREAM_RESULTS[stream_id] = {"status": "running"}
-
         def _worker():
+            STREAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            stream_file = STREAM_DATA_DIR / f"{stream_id}.txt"
+            done_file = STREAM_DATA_DIR / f"{stream_id}.done"
+            err_file = STREAM_DATA_DIR / f"{stream_id}.error"
+
             try:
                 question     = request_data["question"]
                 chat_history = request_data.get("chat_history", [])
@@ -523,10 +521,7 @@ def register_callbacks(app) -> None:
                 # ── Load analysis ──────────────────────────────────────────
                 analysis_file = DATA_PROCESSED_DIR / "analysis.json"
                 if not analysis_file.exists():
-                    _STREAM_RESULTS[stream_id] = {
-                        "status": "error",
-                        "error": "Analysis results not found. Please re-run analysis.",
-                    }
+                    err_file.write_text("Analysis results not found. Please re-run analysis.", encoding="utf-8")
                     return
 
                 with analysis_file.open(encoding="utf-8") as fh:
@@ -559,6 +554,8 @@ def register_callbacks(app) -> None:
                 from llm.orchestrator import LLMOrchestrator
                 orchestrator = LLMOrchestrator()
                 chunks = []
+                last_sync = time.time()
+                
                 for token in orchestrator.chat_grounded_stream(
                     question=question,
                     company=company,
@@ -569,25 +566,25 @@ def register_callbacks(app) -> None:
                 ):
                     if token:
                         chunks.append(token)
-                        # Store partial so poller can show progressive text
-                        _STREAM_RESULTS[stream_id]["partial"] = "".join(chunks)
+                        # Throttle disk writes to ~3Hz to avoid IO bottlenecks
+                        if time.time() - last_sync > 0.3:
+                            stream_file.write_text("".join(chunks), encoding="utf-8")
+                            last_sync = time.time()
 
                 assistant_text = "".join(chunks)
+                stream_file.write_text(assistant_text, encoding="utf-8")
+                
                 logger.info(f"[WORKER] Done. {len(chunks)} chunks, {len(assistant_text)} chars")
 
-                _STREAM_RESULTS[stream_id] = {
-                    "status": "done",
+                done_file.write_text(json.dumps({
                     "assistant_text": assistant_text,
                     "chat_history": chat_history,
                     "conv_summary": conv_summary,
-                }
+                }), encoding="utf-8")
 
             except Exception as exc:
                 logger.error(f"[WORKER] Fatal error: {exc}", exc_info=True)
-                _STREAM_RESULTS[stream_id] = {
-                    "status": "error",
-                    "error": f"Something went wrong: {exc}",
-                }
+                err_file.write_text(f"Something went wrong: {exc}", encoding="utf-8")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -630,7 +627,6 @@ def register_callbacks(app) -> None:
         # ── Timeout guard ─────────────────────────────────────────────────
         elapsed = time.time() - streaming_data.get("start_time", time.time())
         if elapsed > STREAM_FIRST_TOKEN_TIMEOUT_SEC:
-            _STREAM_RESULTS.pop(stream_id, None)
             logger.error(f"[POLL] Timeout after {elapsed:.0f}s for stream_id={stream_id}")
             error_msg = f"⏱️ Response timed out after {int(elapsed)}s. Please try again."
             final_history = chat_history + [
@@ -639,18 +635,24 @@ def register_callbacks(app) -> None:
             ]
             patched_messages = Patch()
             patched_messages[-1] = _chat_bubble("assistant", error_msg)
+            
+            # Clean up
+            for ext in ["txt", "done", "error"]:
+                f = STREAM_DATA_DIR / f"{stream_id}.{ext}"
+                if f.exists(): f.unlink()
+
             return (
                 patched_messages,
                 True, final_history, no_update, None,
             )
 
-        # ── Check result store ────────────────────────────────────────────
-        result = _STREAM_RESULTS.get(stream_id, {})
-        result_status = result.get("status", "running")
+        # ── Check result files ────────────────────────────────────────────
+        stream_file = STREAM_DATA_DIR / f"{stream_id}.txt"
+        done_file = STREAM_DATA_DIR / f"{stream_id}.done"
+        err_file = STREAM_DATA_DIR / f"{stream_id}.error"
 
-        if result_status == "error":
-            _STREAM_RESULTS.pop(stream_id, None)
-            err_text = result.get("error", "Unknown error occurred.")
+        if err_file.exists():
+            err_text = err_file.read_text(encoding="utf-8")
             logger.error(f"[POLL] Worker reported error: {err_text}")
             final_history = chat_history + [
                 {"role": "user",      "content": question},
@@ -658,16 +660,26 @@ def register_callbacks(app) -> None:
             ]
             patched_messages = Patch()
             patched_messages[-1] = _chat_bubble("assistant", f"❌ {err_text}")
+            
+            # Clean up
+            for f in [stream_file, done_file, err_file]:
+                if f.exists(): f.unlink()
+
             return (
                 patched_messages,
                 True, final_history, no_update, None,
             )
 
-        if result_status == "done":
-            _STREAM_RESULTS.pop(stream_id, None)
-            assistant_text   = result.get("assistant_text", "")
-            saved_history    = result.get("chat_history", chat_history)
-            new_conv_summary = result.get("conv_summary", "")
+        if done_file.exists():
+            try:
+                done_data = json.loads(done_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.error(f"[POLL] Error parsing done file: {e}")
+                done_data = {"assistant_text": stream_file.read_text(encoding="utf-8") if stream_file.exists() else "Error reading final response"}
+                
+            assistant_text   = done_data.get("assistant_text", "")
+            saved_history    = done_data.get("chat_history", chat_history)
+            new_conv_summary = done_data.get("conv_summary", "")
             final_history    = saved_history + [
                 {"role": "user",      "content": question},
                 {"role": "assistant", "content": assistant_text},
@@ -675,13 +687,25 @@ def register_callbacks(app) -> None:
             logger.info(f"[POLL] Done — displaying {len(assistant_text)} chars")
             patched_messages = Patch()
             patched_messages[-1] = _chat_bubble("assistant", assistant_text)
+            
+            # Clean up
+            for f in [stream_file, done_file, err_file]:
+                if f.exists(): f.unlink()
+
             return (
                 patched_messages,
                 True, final_history, new_conv_summary, None,
             )
 
         # ── Still running: show partial text if available ─────────────────
-        partial = result.get("partial", "")
+        partial = ""
+        if stream_file.exists():
+            try:
+                partial = stream_file.read_text(encoding="utf-8")
+            except Exception as e:
+                # File might be mid-write, ignore and wait for next poll
+                pass
+
         if poll_num % 10 == 0:
             logger.info(f"[POLL] #{poll_num} @ {elapsed:.1f}s | partial={len(partial)} chars")
 
