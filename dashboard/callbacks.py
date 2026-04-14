@@ -40,7 +40,7 @@ import time
 import uuid
 from pathlib import Path
 
-from dash import Input, Output, State, callback_context, no_update
+from dash import Input, Output, State, callback_context, no_update, Patch
 from dash.exceptions import PreventUpdate
 
 from llm.query_analyzer import get_analyzer
@@ -637,8 +637,10 @@ def register_callbacks(app) -> None:
                 {"role": "user",      "content": question},
                 {"role": "assistant", "content": error_msg},
             ]
+            patched_messages = Patch()
+            patched_messages[-1] = _chat_bubble("assistant", error_msg)
             return (
-                [_chat_bubble(m["role"], m["content"]) for m in final_history],
+                patched_messages,
                 True, final_history, no_update, None,
             )
 
@@ -654,8 +656,10 @@ def register_callbacks(app) -> None:
                 {"role": "user",      "content": question},
                 {"role": "assistant", "content": f"❌ {err_text}"},
             ]
+            patched_messages = Patch()
+            patched_messages[-1] = _chat_bubble("assistant", f"❌ {err_text}")
             return (
-                [_chat_bubble(m["role"], m["content"]) for m in final_history],
+                patched_messages,
                 True, final_history, no_update, None,
             )
 
@@ -669,8 +673,10 @@ def register_callbacks(app) -> None:
                 {"role": "assistant", "content": assistant_text},
             ]
             logger.info(f"[POLL] Done — displaying {len(assistant_text)} chars")
+            patched_messages = Patch()
+            patched_messages[-1] = _chat_bubble("assistant", assistant_text)
             return (
-                [_chat_bubble(m["role"], m["content"]) for m in final_history],
+                patched_messages,
                 True, final_history, new_conv_summary, None,
             )
 
@@ -679,14 +685,13 @@ def register_callbacks(app) -> None:
         if poll_num % 10 == 0:
             logger.info(f"[POLL] #{poll_num} @ {elapsed:.1f}s | partial={len(partial)} chars")
 
-        base_bubbles = [_chat_bubble(m["role"], m["content"]) for m in chat_history]
-        base_bubbles.append(_chat_bubble("user", question))
+        patched_messages = Patch()
         if partial:
-            base_bubbles.append(_chat_bubble("assistant", partial))
+            patched_messages[-1] = _chat_bubble("assistant", partial)
         else:
-            base_bubbles.append(_loading_bubble())
+            patched_messages[-1] = _loading_bubble()
 
-        return base_bubbles, no_update, no_update, no_update, streaming_data
+        return patched_messages, no_update, no_update, no_update, streaming_data
 
 
     # ── 7. Back to Dashboard ──────────────────────────────────────────────────

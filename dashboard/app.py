@@ -129,7 +129,7 @@ def create_app() -> tuple[dash.Dash, FastAPI]:
         # Streaming interval — polls for new tokens
         dcc.Interval(
             id="stream-interval",
-            interval=100,  # Poll every 100ms - CRITICAL for responsive streaming
+            interval=200,  # Poll every 200ms - leaves breathing room for browser
             n_intervals=0,
             disabled=True,
         ),
