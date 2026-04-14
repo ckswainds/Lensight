@@ -44,8 +44,9 @@ from dash import Input, Output, State, callback_context, no_update, Patch
 from dash.exceptions import PreventUpdate
 
 from llm.query_analyzer import get_analyzer
+import logging
 
-
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
