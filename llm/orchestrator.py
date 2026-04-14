@@ -52,7 +52,8 @@ class LLMOrchestrator:
         self.chat_llm = ChatGoogleGenerativeAI(
             model=config.LLM_MODEL,
             temperature=0.3,
-            api_key=config.GEMINI_API_KEY
+            api_key=config.GEMINI_API_KEY,
+            streaming=True  # Ensure granular streaming is enabled
         )
         logger.debug(f"[ORCHESTRATOR] LLM initialized with model: {config.LLM_MODEL}")
 
