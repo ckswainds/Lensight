@@ -3,139 +3,408 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lensight AI - Modern Equity Research</title>
-    
+    <title>Lensight AI — Upload Financials, Get Instant AI Research</title>
+    <meta name="description" content="Upload a company's financials and annual report. Lensight instantly computes ratios, spots trends, and lets you chat with the data using AI.">
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Chart.js and Marked.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    
+
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="ambient-bg"></div>
 
-    <main class="container">
-        
-        <!-- ================= UPLOAD VIEW ================= -->
-        <section id="upload-view" class="view active-view">
-            <header>
-                <div class="logo">
-                    <span class="logo-icon">✨</span>
-                    <h1>Lensight AI</h1>
-                </div>
-                <p class="subtitle">Automated Institutional-Grade Equity Research</p>
-            </header>
+<!-- ══════════════════════════════════════════════════════
+     UPLOAD VIEW
+══════════════════════════════════════════════════════ -->
+<div id="upload-view" class="view">
+    <div class="upload-bg-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
 
-            <div class="upload-card glass">
-                <form id="upload-form">
-                    <div class="file-drop-zone" id="excel-drop-zone">
-                        <div class="icon">📊</div>
-                        <h3>Upload Financial Data</h3>
-                        <p>Drag & drop Excel file here</p>
-                        <input type="file" id="excel-input" accept=".xlsx,.xls" required>
-                    </div>
+    <div class="upload-center">
+        <!-- Brand -->
+        <div class="brand-hero">
+            <div class="brand-logo-mark">
+                <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+                    <rect width="36" height="36" rx="10" fill="url(#lg1)"/>
+                    <path d="M8 26 L14 18 L20 22 L28 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs><linearGradient id="lg1" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                        <stop offset="0%" stop-color="#8b5cf6"/>
+                        <stop offset="100%" stop-color="#3b82f6"/>
+                    </linearGradient></defs>
+                </svg>
+            </div>
+            <h1 class="brand-name">Lensight<span class="brand-ai">AI</span></h1>
+        </div>
+        <p class="brand-tagline">Upload financials. Get ratios, trends &amp; AI insights — instantly.</p>
+        <div class="brand-pills">
+            <span class="pill">📊 Ratio Analysis</span>
+            <span class="pill">🤖 AI Narratives</span>
+            <span class="pill">🔍 RAG Insights</span>
+        </div>
 
-                    <div class="file-drop-zone" id="pdf-drop-zone">
-                        <div class="icon">📄</div>
-                        <h3>Upload Annual Report (Optional)</h3>
-                        <p>Drag & drop PDF for RAG context</p>
-                        <input type="file" id="pdf-input" accept=".pdf">
-                    </div>
-
-                    <button type="submit" class="primary-btn" id="analyze-btn">
-                        <span>Analyze Company</span>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
-                    </button>
-                </form>
-
-                <!-- Processing State Tracker -->
-                <div id="processing-tracker" class="hidden">
-                    <div class="progress-bar-container">
-                        <div class="progress-bar" id="pipeline-progress"></div>
-                    </div>
-                    <div class="status-labels">
-                        <span id="pipeline-stage">Initializing...</span>
-                        <span id="pipeline-pct">0%</span>
-                    </div>
-                    <!-- RAG specific tracker -->
-                    <div class="rag-tracker hidden" id="rag-tracker-container">
-                        <div class="progress-bar-container small">
-                            <div class="progress-bar" id="rag-progress"></div>
+        <!-- Upload Card -->
+        <div class="upload-card">
+            <form id="upload-form">
+                <div class="drop-zones-row">
+                    <label class="drop-zone" id="excel-zone">
+                        <div class="dz-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                            </svg>
                         </div>
-                        <span id="rag-stage" class="small-label">RAG Init...</span>
+                        <div class="dz-text">
+                            <span class="dz-title" id="excel-label">Financial Data</span>
+                            <span class="dz-sub">Screener.in Excel Export (.xlsx)</span>
+                            <span class="dz-badge required">Required</span>
+                        </div>
+                        <input type="file" id="excel-input" accept=".xlsx,.xls" required>
+                    </label>
+
+                    <div class="dz-divider">
+                        <span>+</span>
+                    </div>
+
+                    <label class="drop-zone" id="pdf-zone">
+                        <div class="dz-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <path d="M9 13h6M9 17h4"/>
+                            </svg>
+                        </div>
+                        <div class="dz-text">
+                            <span class="dz-title" id="pdf-label">Annual Report</span>
+                            <span class="dz-sub">For AI qualitative insights (.pdf)</span>
+                            <span class="dz-badge optional">Optional</span>
+                        </div>
+                        <input type="file" id="pdf-input" accept=".pdf">
+                    </label>
+                </div>
+
+                <button type="submit" id="analyze-btn" class="run-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    <span id="analyze-btn-text">Run Analysis</span>
+                </button>
+            </form>
+
+            <!-- Progress Tracker -->
+            <div id="processing-tracker" class="progress-tracker hidden">
+                <div class="progress-stages">
+                    <div class="prog-row">
+                        <span id="pipeline-stage" class="prog-label">Initializing...</span>
+                        <span id="pipeline-pct" class="prog-pct">0%</span>
+                    </div>
+                    <div class="prog-bar-wrap">
+                        <div class="prog-bar" id="pipeline-progress"></div>
+                    </div>
+                </div>
+                <div id="rag-tracker-container" class="prog-rag hidden">
+                    <div class="prog-row small">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3"/></svg>
+                        <span id="rag-stage" class="prog-label">RAG Indexing...</span>
+                        <div class="prog-bar-wrap" style="flex:1; margin-left:8px">
+                            <div class="prog-bar accent" id="rag-progress"></div>
+                        </div>
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     DASHBOARD VIEW
+══════════════════════════════════════════════════════ -->
+<div id="dashboard-view" class="view hidden dashboard-layout">
+
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+        <div class="sb-brand">
+            <div class="sb-logo-mark">
+                <svg width="28" height="28" viewBox="0 0 36 36" fill="none">
+                    <rect width="36" height="36" rx="10" fill="url(#lg2)"/>
+                    <path d="M8 26 L14 18 L20 22 L28 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs><linearGradient id="lg2" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                        <stop offset="0%" stop-color="#8b5cf6"/>
+                        <stop offset="100%" stop-color="#3b82f6"/>
+                    </linearGradient></defs>
+                </svg>
+            </div>
+            <span class="sb-brand-name">Lensight</span>
+        </div>
+
+        <div class="sb-company-card">
+            <div class="sb-company-name" id="sb-company-name">—</div>
+            <div class="sb-period" id="sb-period">—</div>
+            <div class="sb-score-row">
+                <span class="sb-score-label">Overall Score</span>
+                <span class="sb-score-value" id="sb-overall-score">—</span>
+            </div>
+        </div>
+
+        <nav class="sb-nav">
+            <a class="sb-nav-item active" data-page="overview" id="nav-overview">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                <span>Overview</span>
+            </a>
+            <a class="sb-nav-item" data-page="analysis" id="nav-analysis">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                <span>Charts & Ratios</span>
+            </a>
+            <a class="sb-nav-item" data-page="chat" id="nav-chat">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>AI Research</span>
+            </a>
+        </nav>
+
+        <div class="sb-footer">
+            <!-- Compact status row (always visible) -->
+            <div class="sb-rag-status" id="sb-rag-status">
+                <span class="rag-dot idle" id="rag-status-dot"></span>
+                <span id="sb-rag-text">No PDF uploaded</span>
+            </div>
+
+            <!-- RAG Progress Panel (visible only while indexing) -->
+            <div id="rag-progress-panel" class="rag-progress-panel hidden">
+                <div class="rag-prog-top-row">
+                    <span class="rag-prog-title">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
+                        </svg>
+                        Indexing Annual Report
+                    </span>
+                    <span class="rag-prog-pct" id="rag-prog-pct">0%</span>
+                </div>
+                <div class="rag-prog-bar-track">
+                    <div class="rag-prog-bar-fill" id="rag-prog-fill" style="width:0%"></div>
+                </div>
+                <div class="rag-prog-stage" id="rag-prog-stage">Initializing...</div>
+                <div class="rag-prog-eta" id="rag-prog-eta">Estimating time...</div>
+            </div>
+
+            <!-- No PDF Banner (visible only when no PDF was uploaded) -->
+            <div id="rag-no-pdf-banner" class="rag-no-pdf-banner hidden">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <div class="rag-no-pdf-text">
+                    <span class="rag-no-pdf-title">Annual Report Not Uploaded</span>
+                    <span class="rag-no-pdf-sub">Upload a PDF for deeper AI insights and qualitative analysis</span>
+                </div>
+            </div>
+
+            <!-- RAG Error Banner (visible only when PDF indexing failed) -->
+            <div id="rag-error-banner" class="rag-error-banner hidden">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <div class="rag-error-text">
+                    <span class="rag-error-title">PDF Processing Failed</span>
+                    <span class="rag-error-sub">Analysis continues with financial data only</span>
+                </div>
+            </div>
+
+            <!-- RAG Ready Banner -->
+            <div id="rag-ready-banner" class="rag-ready-banner hidden">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <div class="rag-ready-text">
+                    <span class="rag-ready-title">Annual Report Indexed</span>
+                    <span class="rag-ready-sub">AI Research grounded in full document context</span>
+                </div>
+            </div>
+
+            <button id="btn-back" class="sb-back-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                New Analysis
+            </button>
+        </div>
+    </aside>
+
+    <!-- ── Main Content ── -->
+    <main class="main-area">
+
+        <!-- Top Bar -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <h2 class="topbar-title" id="topbar-title">Overview</h2>
+                <span class="topbar-company" id="topbar-company">—</span>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-rag-badge" id="topbar-rag-badge">⚪ No PDF</div>
+            </div>
+        </header>
+
+        <!-- ── PAGE: OVERVIEW ── -->
+        <section id="page-overview" class="page-section">
+
+            <!-- Score Row -->
+            <div class="score-row" id="score-row">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- Key Metrics Grid (Latest Values) -->
+            <div class="section-header">
+                <h3 class="section-title">Key Metrics — Latest Period</h3>
+                <span class="section-sub" id="ov-latest-period">—</span>
+            </div>
+            <div class="kpi-grid" id="kpi-grid">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- AI Summary -->
+            <div class="section-header">
+                <h3 class="section-title">AI Research Summary</h3>
+            </div>
+            <div class="ai-summary-card" id="ai-summary">
+                <div class="ai-summary-loading">Generating summary...</div>
+            </div>
+
+            <!-- Growth Table -->
+            <div class="section-header">
+                <h3 class="section-title">Growth Overview (CAGR)</h3>
+            </div>
+            <div class="growth-table-wrap" id="growth-table">
+                <!-- Populated by JS -->
+            </div>
+
         </section>
 
-        <!-- ================= DASHBOARD VIEW ================= -->
-        <section id="dashboard-view" class="view hidden">
-            <!-- Top Navbar -->
-            <nav class="glass-nav">
-                <div class="logo small-logo">
-                    <span class="logo-icon">✨</span>
-                    <h2>Lensight</h2>
+        <!-- ── PAGE: ANALYSIS ── -->
+        <section id="page-analysis" class="page-section hidden">
+
+            <!-- Controls Row -->
+            <div class="analysis-controls">
+                <div class="category-tabs" id="category-tabs">
+                    <button class="cat-tab active" data-cat="all">All</button>
+                    <button class="cat-tab" data-cat="profitability">Profitability</button>
+                    <button class="cat-tab" data-cat="valuation">Valuation</button>
+                    <button class="cat-tab" data-cat="leverage">Leverage</button>
+                    <button class="cat-tab" data-cat="liquidity">Liquidity</button>
+                    <button class="cat-tab" data-cat="efficiency">Efficiency</button>
+                    <button class="cat-tab" data-cat="per_share">Per Share</button>
                 </div>
-                <div class="company-badge" id="company-name-badge">Company Name</div>
-                <button id="btn-back" class="ghost-btn">← Back to Upload</button>
-            </nav>
-
-            <div class="dashboard-grid">
-                
-                <!-- Left Panel: Financial Analysis (Charts & Ratios) -->
-                <div class="panel data-panel glass">
-                    <div class="panel-header">
-                        <h3>Financial Trends</h3>
-                        <div class="chart-selector">
-                            <button class="active" data-target="revenueChart">Revenue & EBITDA</button>
-                            <button data-target="marginChart">Margins</button>
-                            <button data-target="liquidityChart">Liquidity</button>
-                        </div>
-                    </div>
-                    
-                    <div class="chart-container">
-                        <canvas id="mainChart"></canvas>
-                    </div>
-
-                    <div class="summary-box">
-                        <h4>AI Analysis Summary</h4>
-                        <div id="ai-financial-summary" class="markdown-body skeleton-text"></div>
-                    </div>
-                </div>
-
-                <!-- Right Panel: Chat Interface -->
-                <div class="panel chat-panel glass">
-                    <div class="chat-header">
-                        <div class="chat-title">
-                            <h3>Copilot</h3>
-                            <div class="rag-status-badge" id="rag-status-badge">🟢 RAG Ready</div>
-                        </div>
-                    </div>
-
-                    <div class="chat-messages" id="chat-messages">
-                        <div class="message system">
-                            Hello! I am your AI equity research assistant. I've analyzed the financial data. How can I help you understand the company's performance?
-                        </div>
-                        <!-- Bubbles inject here -->
-                    </div>
-
-                    <form class="chat-input-area" id="chat-form">
-                        <input type="text" id="chat-input" placeholder="Ask about growth, risks, or management commentary..." autocomplete="off">
-                        <button type="submit" id="btn-send" class="icon-btn">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
-                        </button>
-                    </form>
+                <div class="period-filter" id="period-filter">
+                    <span class="filter-label">Period:</span>
+                    <button class="period-btn" data-years="3">3Y</button>
+                    <button class="period-btn" data-years="5">5Y</button>
+                    <button class="period-btn" data-years="7">7Y</button>
+                    <button class="period-btn active" data-years="0">All</button>
                 </div>
             </div>
+
+            <!-- Charts Container — populated by JS -->
+            <div id="charts-container">
+            </div>
+
+        </section>
+
+        <!-- ── PAGE: CHAT ── -->
+        <section id="page-chat" class="page-section hidden chat-page">
+
+            <div class="chat-layout">
+                <div class="chat-header-bar">
+                    <div class="chat-header-info">
+                        <div class="chat-ai-icon">
+                            <!-- Sparkle / AI star icon -->
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                                <path d="M12 2L13.09 8.26L19 6L14.74 10.74L21 12L14.74 13.26L19 18L13.09 15.74L12 22L10.91 15.74L5 18L9.26 13.26L3 12L9.26 10.74L5 6L10.91 8.26L12 2Z" fill="url(#ai-grad)" stroke="none"/>
+                                <defs>
+                                    <linearGradient id="ai-grad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+                                        <stop offset="0%" stop-color="#a78bfa"/>
+                                        <stop offset="100%" stop-color="#60a5fa"/>
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="chat-ai-name">AI Research Assistant</div>
+                            <div class="chat-ai-sub">Grounded in financial ratios &amp; annual report data</div>
+                        </div>
+                    </div>
+                    <div class="chat-rag-pill" id="chat-rag-pill">⚪ Financials Only</div>
+                </div>
+
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-welcome">
+                        <div class="welcome-icon">
+                            <!-- Neural / AI sparkle welcome icon -->
+                            <svg width="34" height="34" viewBox="0 0 36 36" fill="none">
+                                <rect width="36" height="36" rx="10" fill="url(#wg1)"/>
+                                <!-- Chart trend line -->
+                                <path d="M7 24 L13 17 L18 20 L23 13 L29 9" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+                                <!-- Sparkle star top-right -->
+                                <path d="M28 5L28.7 7.3L31 8L28.7 8.7L28 11L27.3 8.7L25 8L27.3 7.3L28 5Z" fill="white"/>
+                                <!-- Small dot sparkle -->
+                                <circle cx="9" cy="10" r="1.2" fill="white" opacity="0.6"/>
+                                <defs>
+                                    <linearGradient id="wg1" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                                        <stop offset="0%" stop-color="#8b5cf6"/>
+                                        <stop offset="100%" stop-color="#3b82f6"/>
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                        </div>
+                        <p>Hello! I've analyzed the financial data and I'm ready to answer your questions. Ask me about profitability, valuation, risks, trends, or any other aspect of the company's performance.</p>
+                        <div class="chat-suggestions">
+                            <button class="suggestion-chip" data-q="What is the ROE trend over the last 5 years?">ROE trend?</button>
+                            <button class="suggestion-chip" data-q="Analyze the valuation metrics. Is the stock expensive?">Valuation analysis</button>
+                            <button class="suggestion-chip" data-q="What are the key risks for this company?">Key risks</button>
+                            <button class="suggestion-chip" data-q="Summarize the profitability performance.">Profitability summary</button>
+                        </div>
+                    </div>
+                </div>
+
+                <form class="chat-input-bar" id="chat-form">
+                    <input
+                        type="text"
+                        id="chat-input"
+                        placeholder="Ask about growth, risks, valuation, management..."
+                        autocomplete="off"
+                    >
+                    <button type="submit" id="btn-send" class="send-btn" aria-label="Send">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"/>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </button>
+                </form>
+            </div>
+
         </section>
 
     </main>
+</div>
 
-    <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

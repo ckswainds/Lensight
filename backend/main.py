@@ -39,6 +39,72 @@ class ChatRequest(BaseModel):
     chat_history: List[dict] = []
 
 # -----------------------------------------------------------------------------
+# Helper: Build financial summary string for LLM context
+# -----------------------------------------------------------------------------
+def _build_financial_summary(data: dict) -> str:
+    """
+    Converts analysis.json into a compact textual summary for the LLM chat prompt.
+    Extracts latest values + trends for key ratios across all categories.
+    """
+    lines = []
+    company = data.get("company", "Unknown")
+    latest = data.get("latest_period", "")
+    periods = data.get("periods", [])
+    
+    lines.append(f"Company: {company}")
+    lines.append(f"Analysis Period: {periods[0] if periods else 'N/A'} to {latest}")
+    lines.append(f"Overall Score: {data.get('summary_scores', {}).get('overall_score', 'N/A')}/5")
+    lines.append("")
+
+    # Category labels for display
+    categories = {
+        "profitability": "Profitability",
+        "valuation": "Valuation",
+        "leverage": "Leverage",
+        "liquidity": "Liquidity",
+        "efficiency": "Efficiency",
+        "per_share": "Per Share",
+    }
+
+    for cat_key, cat_label in categories.items():
+        cat_data = data.get(cat_key, {})
+        if not cat_data:
+            continue
+        lines.append(f"## {cat_label}")
+        for ratio_name, ratio_data in cat_data.items():
+            if not isinstance(ratio_data, dict):
+                continue
+            latest_val = ratio_data.get("latest_value")
+            latest_lbl = ratio_data.get("latest_label", "")
+            trend = ratio_data.get("trend", "")
+            display_name = ratio_name.replace("_", " ").title()
+            val_str = f"{latest_val:.2f}" if latest_val is not None else "N/A"
+            lines.append(f"  - {display_name}: {val_str} ({latest_lbl}) | Trend: {trend}")
+        lines.append("")
+
+    # Growth CAGRs
+    growth = data.get("growth", {})
+    if growth:
+        lines.append("## Growth (CAGR)")
+        for key, g in growth.items():
+            if isinstance(g, dict):
+                val = g.get("value")
+                lbl = g.get("label", "")
+                display = key.replace("_", " ").title()
+                val_str = f"{val:.1f}%" if val is not None else "N/A"
+                lines.append(f"  - {display}: {val_str} ({lbl})")
+        lines.append("")
+
+    # Include llm_financial_summary if it exists (could be pre-generated)
+    llm_summary = data.get("llm_financial_summary", "")
+    if llm_summary:
+        lines.append("## AI Narrative Summary")
+        lines.append(llm_summary)
+
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
 
@@ -106,15 +172,18 @@ async def chat_endpoint(req: ChatRequest):
     rag_status_raw = st.get("rag_status", "idle")
     company_name = st.get("company", "Unknown Company")
     
-    # 1. Load Financial Summary
+    # 1. Load Financial Summary (build a rich text representation for the LLM)
     analysis_file = DATA_PROCESSED_DIR / "analysis.json"
     financial_summary = ""
     if analysis_file.exists():
         with open(analysis_file, "r") as f:
             data = json.load(f)
-            financial_summary = data.get("llm_financial_summary", "")
+            financial_summary = _build_financial_summary(data)
+            # Fallback company name from analysis if pipeline status doesn't have it
+            if company_name == "Unknown Company":
+                company_name = data.get("company", "Unknown Company")
 
-    # 2. Retrieve RAG text (Wait to import slowly to avoid loading LLMs globally)
+    # 2. Retrieve RAG text (lazy import to avoid loading models globally)
     rag_context = ""
     try:
         if rag_status_raw == "ready":
@@ -129,9 +198,6 @@ async def chat_endpoint(req: ChatRequest):
         orchestrator = LLMOrchestrator()
         
         try:
-            # chat_grounded_stream is synchronous generator, we can iter over it,
-            # but ideally it should be async. However, since we are doing SSE,
-            # we can use Server-Sent Events structure: `data: chunk\n\n`.
             for chunk in orchestrator.chat_grounded_stream(
                 question=req.question,
                 company=company_name,
@@ -140,9 +206,8 @@ async def chat_endpoint(req: ChatRequest):
                 conversation_summary=req.conversation_summary,
                 rag_status=rag_status_raw,
             ):
-                # Yield in SSE format
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                await asyncio.sleep(0) # Yield control back to event loop
+                await asyncio.sleep(0)
         except Exception as e:
             logger.error(f"Chat streaming error: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"

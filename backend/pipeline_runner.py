@@ -267,8 +267,25 @@ def run_pipeline(
         # ── Stage: FORMATTING ────────────────────────────────────
         _status.update(Stage.FORMATTING)
         from analysis.json_formatter import JsonFormatter
-        JsonFormatter(processed_dir).build(trend_result)
+        analysis_data = JsonFormatter(processed_dir).build(trend_result)
         logger.info("analysis.json written.")
+
+        # ── Generate LLM Narrative Summary and patch into analysis.json ──
+        try:
+            import json as _json
+            from llm.narrative_generator import NarrativeGenerator
+            logger.info("Generating LLM financial narrative summary...")
+            narrative = NarrativeGenerator().generate_narrative(financial_data=analysis_data)
+            # Patch analysis.json with the generated summary
+            analysis_path = processed_dir / "analysis.json"
+            with open(analysis_path, "r", encoding="utf-8") as _f:
+                _doc = _json.load(_f)
+            _doc["llm_financial_summary"] = narrative
+            with open(analysis_path, "w", encoding="utf-8") as _f:
+                _json.dump(_doc, _f, indent=2, ensure_ascii=False)
+            logger.info("LLM narrative summary injected into analysis.json (%d chars)", len(narrative))
+        except Exception as _narr_exc:
+            logger.warning("LLM narrative generation failed (non-fatal): %s", _narr_exc)
 
         # Disk marker first so any worker/instance reading the same filesystem
         # can redirect even if this process's in-memory _status is not polled.
@@ -364,5 +381,5 @@ def start_pipeline(
 
     thread = threading.Thread(target=_worker, daemon=True, name="lensight-pipeline")
     thread.start()
-    logger.info("Pipeline thread started for file: %s", filename)
+    logger.info("Pipeline thread started for file: %s", excel_filename)
     return True

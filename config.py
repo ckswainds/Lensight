@@ -16,7 +16,7 @@ class Config:
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     
-    # RAG Settings
+    # RAG Settings — HuggingFace Inference API embedding model
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
     RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
