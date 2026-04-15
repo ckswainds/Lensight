@@ -34,10 +34,10 @@ def _classify_llm_error(e: Exception) -> str:
 
     if '429' in s or 'resource_exhausted' in sl or 'quota' in sl or 'rate limit' in sl or 'rate_limit' in sl:
         return (
-            "**AI Service Limit Reached**\n\n"
-            "The AI model has temporarily exceeded its request quota. "
-            "This is usually resolved within a minute. Please wait a moment and try your question again.\n\n"
-            "> 💡 *Tip: If this happens frequently, consider upgrading your Gemini API plan.*"
+            "**API Limit Exceeded**\n\n"
+            "The AI service has reached its request limit for now. "
+            "Please try again in a few moments — this usually resets very quickly.\n\n"
+            "> 💡 *Tip: We use a high-performance model that sometimes hits rate caps during peak usage. Thank you for your patience.*"
         )
     if '503' in s or 'service unavailable' in sl:
         return (
