@@ -34,10 +34,10 @@ def _classify_llm_error(e: Exception) -> str:
 
     if '429' in s or 'resource_exhausted' in sl or 'quota' in sl or 'rate limit' in sl or 'rate_limit' in sl:
         return (
-            "<div class='err-header'>⚠️ API Limit Exceeded</div>"
+            "<div class='err-header'>API Limit Exceeded</div>"
             "<p>The AI service has reached its request limit. Please try again in a few moments — this usually resets very quickly.</p>"
             "<hr/>"
-            "<div class='err-footer'>💡 <b>Notice:</b> High-capacity models may hit rate caps during peak periods. Thank you for your patience.</div>"
+            "<div class='err-footer'><b>Notice:</b> High-capacity models may hit rate caps during peak periods. Thank you for your patience.</div>"
         )
     if '503' in s or 'service unavailable' in sl:
         return (
