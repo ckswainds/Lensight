@@ -967,8 +967,19 @@ body {
 /* Error state bubble */
 .msg-bubble.msg-error {
     background: rgba(245,158,11,0.06);
-    border-color: rgba(245,158,11,0.25);
+    border: 1px solid rgba(245,158,11,0.25);
     color: var(--text-secondary);
+    padding: 16px 20px;
+}
+.msg-bubble.msg-error h3 {
+    color: var(--amber);
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 1rem;
+}
+.msg-bubble.msg-error hr {
+    border-color: rgba(245,158,11,0.15);
+    margin: 12px 0;
 }
 .msg-bubble.msg-error strong { color: var(--amber); }
 .msg-bubble.msg-error blockquote {
