@@ -971,22 +971,22 @@ body {
     color: var(--text-secondary);
     padding: 16px 20px;
 }
-.msg-bubble.msg-error h3 {
+.msg-bubble.msg-error .err-header {
     color: var(--amber);
-    margin-top: 0;
+    font-weight: 700;
     margin-bottom: 8px;
     font-size: 1rem;
 }
 .msg-bubble.msg-error hr {
-    border-color: rgba(245,158,11,0.15);
+    border: none;
+    border-top: 1px solid rgba(245,158,11,0.15);
     margin: 12px 0;
 }
-.msg-bubble.msg-error strong { color: var(--amber); }
-.msg-bubble.msg-error blockquote {
-    border-left-color: var(--amber);
+.msg-bubble.msg-error .err-footer {
+    font-size: 0.85em;
     color: var(--text-muted);
-    font-size: 0.82em;
 }
+.msg-bubble.msg-error b { color: var(--amber); }
 
 /* Typing indicator */
 .typing-dots span {
