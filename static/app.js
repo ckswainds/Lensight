@@ -957,7 +957,8 @@ getEl('chat-form').addEventListener('submit', async (e) => {
                         typingBubble.querySelector('.msg-bubble').innerHTML = marked.parse(fullText);
                         getEl('chat-messages').scrollTop = getEl('chat-messages').scrollHeight;
                     } else if (obj.error) {
-                        typingBubble.querySelector('.msg-bubble').innerHTML = `⚠️ ${obj.error}`;
+                        typingBubble.querySelector('.msg-bubble').classList.add('msg-error');
+                        typingBubble.querySelector('.msg-bubble').innerHTML = marked.parse(obj.error);
                     }
                 } catch (_) {}
             }
@@ -970,7 +971,12 @@ getEl('chat-form').addEventListener('submit', async (e) => {
         chatHistory.push({ role: 'assistant', content: fullText });
 
     } catch (err) {
-        if (typingBubble) typingBubble.querySelector('.msg-bubble').innerHTML = `⚠️ Error: ${err.message}`;
+        if (typingBubble) {
+            typingBubble.querySelector('.msg-bubble').classList.add('msg-error');
+            typingBubble.querySelector('.msg-bubble').innerHTML = marked.parse(
+                `**Connection Error**\n\nCould not reach the AI service. Please check your connection and try again.`
+            );
+        }
     } finally {
         getEl('btn-send').disabled = false;
         getEl('chat-messages').scrollTop = getEl('chat-messages').scrollHeight;

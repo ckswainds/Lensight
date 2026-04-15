@@ -964,6 +964,19 @@ body {
 .msg-bubble hr { border-color: rgba(255,255,255,0.1); margin: 0.75rem 0; }
 .msg-bubble blockquote { border-left: 3px solid var(--purple); padding-left: 12px; color: var(--text-muted); margin: 0.5rem 0; }
 
+/* Error state bubble */
+.msg-bubble.msg-error {
+    background: rgba(245,158,11,0.06);
+    border-color: rgba(245,158,11,0.25);
+    color: var(--text-secondary);
+}
+.msg-bubble.msg-error strong { color: var(--amber); }
+.msg-bubble.msg-error blockquote {
+    border-left-color: var(--amber);
+    color: var(--text-muted);
+    font-size: 0.82em;
+}
+
 /* Typing indicator */
 .typing-dots span {
     display: inline-block;

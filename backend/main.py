@@ -19,6 +19,56 @@ from backend.pipeline_runner import start_pipeline, get_status, is_idle, flush_a
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Error Classification Helper
+# ---------------------------------------------------------------------------
+
+def _classify_llm_error(e: Exception) -> str:
+    """
+    Convert raw LLM/API exceptions into professional, user-facing markdown messages.
+    Inspects the error string for known patterns (quota, timeout, auth, etc.).
+    """
+    s = str(e)
+    sl = s.lower()
+
+    if '429' in s or 'resource_exhausted' in sl or 'quota' in sl or 'rate limit' in sl or 'rate_limit' in sl:
+        return (
+            "**AI Service Limit Reached**\n\n"
+            "The AI model has temporarily exceeded its request quota. "
+            "This is usually resolved within a minute. Please wait a moment and try your question again.\n\n"
+            "> 💡 *Tip: If this happens frequently, consider upgrading your Gemini API plan.*"
+        )
+    if '503' in s or 'service unavailable' in sl:
+        return (
+            "**AI Service Temporarily Unavailable**\n\n"
+            "The AI service is experiencing a brief disruption. "
+            "Please try again in a few seconds."
+        )
+    if 'timeout' in sl or 'timed out' in sl or 'deadline' in sl:
+        return (
+            "**Request Timed Out**\n\n"
+            "The AI service took too long to respond. "
+            "Please try again — this is usually temporary."
+        )
+    if 'connection' in sl or 'network' in sl or 'unreachable' in sl:
+        return (
+            "**Connection Error**\n\n"
+            "Unable to reach the AI service. "
+            "Please check your internet connection and try again."
+        )
+    if 'api_key' in sl or 'authentication' in sl or 'unauthorized' in sl or '401' in s or '403' in s:
+        return (
+            "**Authentication Error**\n\n"
+            "There is a configuration issue with the AI service credentials. "
+            "Please contact support."
+        )
+    return (
+        "**Something Went Wrong**\n\n"
+        "An unexpected error occurred while processing your request. "
+        "Please try again in a moment."
+    )
+
 app = FastAPI(title="Lensight AI Backend")
 
 # CORS setup
@@ -209,8 +259,9 @@ async def chat_endpoint(req: ChatRequest):
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
                 await asyncio.sleep(0)
         except Exception as e:
-            logger.error(f"Chat streaming error: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.error(f"Chat streaming error: {e}", exc_info=True)
+            friendly_msg = _classify_llm_error(e)
+            yield f"data: {json.dumps({'error': friendly_msg})}\n\n"
             
         yield "data: [DONE]\n\n"
 
