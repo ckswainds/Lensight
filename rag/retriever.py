@@ -1,16 +1,25 @@
 """Retriever: semantic search over the vector store."""
 
 import logging
-from rag.vector_store import LensightVectorStore
+from langchain_community.vectorstores import Chroma
+from rag.embedder import Embedder
 from config import config
+from constants import DATA_VECTOR_STORE_DIR
 
 logger = logging.getLogger(__name__)
 
 class RAGRetriever:
-    def __init__(self, vector_store_instance: LensightVectorStore):
+    def __init__(self, vector_store_instance=None):
         logger.info("[RAG] Initializing RAGRetriever")
-        self.vector_store = vector_store_instance.get_store()
-        logger.info("[RAG] RAGRetriever initialized with LangSmith tracing enabled")
+        try:
+            self.vector_store = Chroma(
+                persist_directory=str(DATA_VECTOR_STORE_DIR),
+                embedding_function=Embedder(batch_size=1, num_workers=1).get_embeddings_model()
+            )
+            logger.info("[RAG] RAGRetriever initialized with thread-safe disk DB")
+        except Exception as e:
+            logger.error(f"[RAG] Failed to connect to disk DB: {e}")
+            self.vector_store = None
 
     def retrieve_context(self, query: str) -> str:
         """

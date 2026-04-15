@@ -541,13 +541,12 @@ def register_callbacks(app) -> None:
                 rag_context   = ""
                 rag_status_raw = "idle"
                 try:
-                    from dashboard.pipeline_runner import get_rag_store, get_status, RAGStatus
+                    from dashboard.pipeline_runner import get_status, RAGStatus
                     st = get_status()
                     rag_status_raw = st.get("rag_status", RAGStatus.IDLE.value)
-                    store = get_rag_store()
-                    if store and rag_status_raw == RAGStatus.READY.value:
+                    if rag_status_raw == RAGStatus.READY.value:
                         from rag.retriever import RAGRetriever
-                        rag_context = RAGRetriever(store).retrieve_context(question)
+                        rag_context = RAGRetriever().retrieve_context(question)
                 except Exception as exc:
                     logger.warning(f"[WORKER] RAG retrieval failed: {exc}")
 
