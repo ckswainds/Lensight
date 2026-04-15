@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lensight AI - Modern Equity Research</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js and Marked.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="ambient-bg"></div>
+
+    <main class="container">
+        
+        <!-- ================= UPLOAD VIEW ================= -->
+        <section id="upload-view" class="view active-view">
+            <header>
+                <div class="logo">
+                    <span class="logo-icon">✨</span>
+                    <h1>Lensight AI</h1>
+                </div>
+                <p class="subtitle">Automated Institutional-Grade Equity Research</p>
+            </header>
+
+            <div class="upload-card glass">
+                <form id="upload-form">
+                    <div class="file-drop-zone" id="excel-drop-zone">
+                        <div class="icon">📊</div>
+                        <h3>Upload Financial Data</h3>
+                        <p>Drag & drop Excel file here</p>
+                        <input type="file" id="excel-input" accept=".xlsx,.xls" required>
+                    </div>
+
+                    <div class="file-drop-zone" id="pdf-drop-zone">
+                        <div class="icon">📄</div>
+                        <h3>Upload Annual Report (Optional)</h3>
+                        <p>Drag & drop PDF for RAG context</p>
+                        <input type="file" id="pdf-input" accept=".pdf">
+                    </div>
+
+                    <button type="submit" class="primary-btn" id="analyze-btn">
+                        <span>Analyze Company</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                    </button>
+                </form>
+
+                <!-- Processing State Tracker -->
+                <div id="processing-tracker" class="hidden">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="pipeline-progress"></div>
+                    </div>
+                    <div class="status-labels">
+                        <span id="pipeline-stage">Initializing...</span>
+                        <span id="pipeline-pct">0%</span>
+                    </div>
+                    <!-- RAG specific tracker -->
+                    <div class="rag-tracker hidden" id="rag-tracker-container">
+                        <div class="progress-bar-container small">
+                            <div class="progress-bar" id="rag-progress"></div>
+                        </div>
+                        <span id="rag-stage" class="small-label">RAG Init...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= DASHBOARD VIEW ================= -->
+        <section id="dashboard-view" class="view hidden">
+            <!-- Top Navbar -->
+            <nav class="glass-nav">
+                <div class="logo small-logo">
+                    <span class="logo-icon">✨</span>
+                    <h2>Lensight</h2>
+                </div>
+                <div class="company-badge" id="company-name-badge">Company Name</div>
+                <button id="btn-back" class="ghost-btn">← Back to Upload</button>
+            </nav>
+
+            <div class="dashboard-grid">
+                
+                <!-- Left Panel: Financial Analysis (Charts & Ratios) -->
+                <div class="panel data-panel glass">
+                    <div class="panel-header">
+                        <h3>Financial Trends</h3>
+                        <div class="chart-selector">
+                            <button class="active" data-target="revenueChart">Revenue & EBITDA</button>
+                            <button data-target="marginChart">Margins</button>
+                            <button data-target="liquidityChart">Liquidity</button>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-container">
+                        <canvas id="mainChart"></canvas>
+                    </div>
+
+                    <div class="summary-box">
+                        <h4>AI Analysis Summary</h4>
+                        <div id="ai-financial-summary" class="markdown-body skeleton-text"></div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Chat Interface -->
+                <div class="panel chat-panel glass">
+                    <div class="chat-header">
+                        <div class="chat-title">
+                            <h3>Copilot</h3>
+                            <div class="rag-status-badge" id="rag-status-badge">🟢 RAG Ready</div>
+                        </div>
+                    </div>
+
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="message system">
+                            Hello! I am your AI equity research assistant. I've analyzed the financial data. How can I help you understand the company's performance?
+                        </div>
+                        <!-- Bubbles inject here -->
+                    </div>
+
+                    <form class="chat-input-area" id="chat-form">
+                        <input type="text" id="chat-input" placeholder="Ask about growth, risks, or management commentary..." autocomplete="off">
+                        <button type="submit" id="btn-send" class="icon-btn">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

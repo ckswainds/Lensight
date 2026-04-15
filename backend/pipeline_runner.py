@@ -203,8 +203,7 @@ def flush_all_data(uploads_dir: Path, raw_dir: Path, processed_dir: Path) -> Non
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
-    file_content_b64: str,
-    filename: str,
+    excel_filename: str,
     uploads_dir: Path,
     raw_dir:      Path,
     processed_dir: Path,
@@ -223,13 +222,15 @@ def run_pipeline(
         with _status._lock:
             _status.started_at = datetime.now().isoformat(timespec="seconds")
 
-        flush_all_data(uploads_dir, raw_dir, processed_dir)
+        # Note: flush_all_data keeps PDFs but deletes old xlsx. Wait! We must NOT flush uploads 
+        # if FastAPI just saved our new files there! We will skip flush_all_data for uploads_dir here
+        # or do it carefully. Actually, FastAPI should flush BEFORE saving.
+        # So we just flush raw and processed here.
+        _flush_dir(raw_dir)
+        _flush_dir(processed_dir)
 
-        # ── Decode and save uploaded file ────────────────────────
-        xlsx_path = uploads_dir / filename
-        file_bytes = base64.b64decode(file_content_b64)
-        xlsx_path.write_bytes(file_bytes)
-        logger.info("Saved upload: %s (%d bytes)", filename, len(file_bytes))
+        xlsx_path = uploads_dir / excel_filename
+        logger.info("Using Excel file: %s", xlsx_path)
 
         # ── Stage: PARSING ───────────────────────────────────────
         _status.update(Stage.PARSING)
@@ -335,8 +336,7 @@ def run_pipeline(
 
 
 def start_pipeline(
-    file_content_b64: str,
-    filename: str,
+    excel_filename: str,
     uploads_dir: Path,
     raw_dir: Path,
     processed_dir: Path,
@@ -354,7 +354,7 @@ def start_pipeline(
     def _worker():
         try:
             run_pipeline(
-                file_content_b64, filename,
+                excel_filename,
                 uploads_dir, raw_dir, processed_dir,
             )
         except Exception:

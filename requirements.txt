@@ -22,9 +22,7 @@ pydantic>=2.4.2
 python-multipart>=0.0.6
 
 # --- Frontend Dashboard & Visualization ---
-dash>=2.14.1
-dash-bootstrap-components>=1.4.2
-plotly>=5.17.0
+# (Dash and Plotly removed in favor of Vanilla JS + Chart.js)
 
 # --- Utilities & Logging ---
 python-dotenv>=1.0.0
