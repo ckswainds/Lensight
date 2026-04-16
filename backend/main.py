@@ -13,7 +13,7 @@ from constants import (
     DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR,
     PROJECT_ROOT
 )
-from backend.pipeline_runner import start_pipeline, get_status, is_idle, flush_all_data
+from backend.pipeline_runner import start_pipeline, get_status, is_idle, flush_all_data, reset_status
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -196,6 +196,13 @@ async def upload_files(
         raise HTTPException(status_code=500, detail="Failed to start pipeline.")
         
     return {"status": "started", "message": "Pipeline started successfully"}
+
+@app.post("/api/reset")
+async def reset_analysis():
+    """Resets the pipeline state and flushes old data, clearing the session."""
+    reset_status()
+    flush_all_data(DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR)
+    return {"status": "reset"}
 
 @app.get("/api/status")
 async def pipeline_status():

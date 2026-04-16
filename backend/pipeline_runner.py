@@ -70,6 +70,13 @@ class RAGStatus(str, Enum):
     INDEXING   = "embedding"    # Old name maps to embedding
 
 
+class SummaryStatus(str, Enum):
+    IDLE = "idle"
+    GENERATING = "generating"
+    READY = "ready"
+    ERROR = "error"
+
+
 # Human-readable label + progress % per stage
 _STAGE_META: dict[Stage, tuple[str, int]] = {
     Stage.IDLE:         ("Waiting for upload",             0),
@@ -89,6 +96,8 @@ class PipelineStatus:
     """Thread-safe pipeline status container."""
     stage:       Stage  = Stage.IDLE
     rag_status:  RAGStatus = RAGStatus.IDLE
+    summary_status: SummaryStatus = SummaryStatus.IDLE
+    summary_error: str = ""
     progress:    int    = 0
     label:       str    = "Waiting for upload"
     error:       str    = ""
@@ -114,6 +123,11 @@ class PipelineStatus:
             self.rag_progress = max(0, min(100, progress))  # Clamp 0-100
             self.rag_label = label
 
+    def update_summary(self, status: SummaryStatus, error: str = "") -> None:
+        with self._lock:
+            self.summary_status = status
+            self.summary_error = error
+
     def set_company(self, name: str) -> None:
         with self._lock:
             self.company = name
@@ -123,6 +137,8 @@ class PipelineStatus:
             return {
                 "stage":       self.stage.value,
                 "rag_status":  self.rag_status.value,
+                "summary_status": self.summary_status.value,
+                "summary_error": self.summary_error,
                 "rag_progress": self.rag_progress,
                 "rag_label":   self.rag_label,
                 "progress":   self.progress,
@@ -146,6 +162,20 @@ _rag_store = None             # holds the built ChromaDB vector store
 def get_status() -> dict[str, Any]:
     """Return current pipeline status as a plain dict (safe to store in dcc.Store)."""
     return _status.to_dict()
+
+
+def reset_status() -> None:
+    """Reset the global pipeline status back to IDLE so new analysis can begin cleanly."""
+    _status.update(Stage.IDLE)
+    _status.update_rag(RAGStatus.IDLE)
+    _status.update_summary(SummaryStatus.IDLE, error="")
+    global _rag_store
+    _rag_store = None
+    with _status._lock:
+        _status.company = ""
+        _status.progress = 0
+        _status.rag_progress = 0
+        _status.error = ""
 
 
 def get_rag_store():
@@ -270,8 +300,17 @@ def run_pipeline(
         analysis_data = JsonFormatter(processed_dir).build(trend_result)
         logger.info("analysis.json written.")
 
-        # ── Generate LLM Narrative Summary and patch into analysis.json ──
+        # ── SIGNAL CORE DONE ─────────────────────────────────────
+        # Mark core analysis as DONE so the UI redirects to the dashboard immediately.
+        _write_analysis_ready_marker(processed_dir)
+        _status.update(Stage.DONE)
+        with _status._lock:
+            _status.done_at = datetime.now().isoformat(timespec="seconds")
+        logger.info("Core analysis complete. Dashboard can now load. Starting background AI generation...")
+
+        # ── Generate LLM Narrative Summary (Background) ──
         try:
+            _status.update_summary(SummaryStatus.GENERATING)
             import json as _json
             from llm.narrative_generator import NarrativeGenerator
             logger.info("Generating LLM financial narrative summary...")
@@ -284,19 +323,14 @@ def run_pipeline(
             with open(analysis_path, "w", encoding="utf-8") as _f:
                 _json.dump(_doc, _f, indent=2, ensure_ascii=False)
             logger.info("LLM narrative summary injected into analysis.json (%d chars)", len(narrative))
+            _status.update_summary(SummaryStatus.READY)
         except Exception as _narr_exc:
             logger.warning("LLM narrative generation failed (non-fatal): %s", _narr_exc)
-
-        # Disk marker first so any worker/instance reading the same filesystem
-        # can redirect even if this process's in-memory _status is not polled.
-        _write_analysis_ready_marker(processed_dir)
-
-        # ── SIGNAL CORE DONE ─────────────────────────────────────
-        # Mark core analysis as DONE so the UI redirects to the dashboard.
-        _status.update(Stage.DONE)
-        with _status._lock:
-            _status.done_at = datetime.now().isoformat(timespec="seconds")
-        logger.info("Core analysis complete. RAG indexing starting in background...")
+            err_str = str(_narr_exc).lower()
+            if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
+                _status.update_summary(SummaryStatus.ERROR, error="quota")
+            else:
+                _status.update_summary(SummaryStatus.ERROR, error="generic")
 
         # ── Stage: RAG_INDEXING ──────────────────────────────────
         # First, check if PDF exists — only proceed if one was uploaded

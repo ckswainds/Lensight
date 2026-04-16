@@ -347,9 +347,10 @@ async function loadDashboard(statusData) {
     renderOverview();
     renderAnalysis();
 
-    // RAG status — pass full status object so panels reflect real state
+    // RAG and Summary status — pass full status object so panels reflect real state
     updateRagState(statusData || { rag_status: 'idle', rag_progress: 0, rag_label: '' });
-    pollRagBackground();
+    updateSummaryState(statusData || { summary_status: 'idle' });
+    pollBackgroundTasks();
 
     // Navigate to overview by default
     navigateTo('overview');
@@ -515,7 +516,6 @@ function buildQuickSummary() {
         }
     });
     html += '</ul>';
-    html += '<p><em>Upload an Annual Report (PDF) to generate a full AI narrative summary.</em></p>';
     return html;
 }
 
@@ -871,19 +871,75 @@ function updateRagBadge(ragStatus) {
     updateRagState({ rag_status: ragStatus, rag_progress: 0, rag_label: '' });
 }
 
-function pollRagBackground() {
+function pollBackgroundTasks() {
     if (ragPollInterval) clearInterval(ragPollInterval);
     ragPollInterval = setInterval(async () => {
         try {
             const res = await fetch('/api/status');
             const st  = await res.json();
             updateRagState(st);
-            // Stop polling once in a terminal state
-            if (['ready', 'error', 'idle'].includes(st.rag_status)) {
+            await updateSummaryState(st);
+            
+            // Terminal states
+            const ragDone = ['ready', 'error', 'idle'].includes(st.rag_status);
+            const sumDone = ['ready', 'error', 'idle'].includes(st.summary_status || 'idle');
+            
+            if (ragDone && sumDone) {
                 clearInterval(ragPollInterval);
             }
         } catch (_) {}
     }, 2000);
+}
+
+/** Handles dynamic updates of the AI Summary box on the Overview page */
+async function updateSummaryState(st) {
+    const status = st.summary_status || 'idle';
+    
+    // If it's ready, but we don't have the text cached yet, fetch it.
+    if (status === 'ready' && cachedData && !cachedData.llm_financial_summary) {
+        try {
+            const res = await fetch('/api/analysis');
+            if (res.ok) {
+                const fresh = await res.json();
+                if (fresh.llm_financial_summary) {
+                    cachedData.llm_financial_summary = fresh.llm_financial_summary;
+                    if (currentPage === 'overview') renderOverview();
+                }
+            }
+        } catch (_) {}
+        return;
+    }
+
+    // Only inject loading/error states if the summary hasn't already been downloaded
+    if (cachedData && !cachedData.llm_financial_summary) {
+        const sumEl = getEl('ai-summary');
+        if (!sumEl) return;
+        
+        let content = buildQuickSummary();
+        if (status === 'generating') {
+            sumEl.innerHTML = `<div style="padding: 1.25rem; background: rgba(139,92,246,0.06); border-radius: 8px; border: 1px solid rgba(139,92,246,0.15); display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; min-height: 120px;">
+                <div class="typing-dots"><span></span><span></span><span></span></div>
+                <span style="color: var(--purple); font-weight: 500; font-size: 0.95rem;">Synthesizing comprehensive AI narrative...</span>
+            </div>`;
+        } else if (status === 'error') {
+            const isQuota = st.summary_error === 'quota';
+            const errorMsg = isQuota 
+                ? "<b>AI Synthesis Unavailable.</b> The narrative generation service is currently experiencing exceptionally high demand and is at full capacity." 
+                : "<b>AI Narrative Generation Failed.</b> The AI service encountered an unexpected network disruption.";
+            const helpText = isQuota
+                ? "All automated financial scoring, historical trends, and structured analytics have been successfully generated and remain fully accessible below."
+                : "All structured data and standalone metrics below are fully available despite this error.";
+            const icon = isQuota ? "⏳" : "⚠️";
+
+            sumEl.innerHTML = content + `<div style="margin-top: 1rem; padding: 1.25rem; background: rgba(245,158,11,0.06); border-radius: 8px; border: 1px solid rgba(245,158,11,0.25); display: flex; gap: 14px;">
+                <div style="font-size: 1.4rem;">${icon}</div>
+                <div style="display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary);">
+                    <span style="color: var(--amber); font-weight: 500; font-size: 0.95rem;">${errorMsg}</span>
+                    <span style="font-size: 0.88rem; line-height: 1.5;">${helpText}</span>
+                </div>
+            </div>`;
+        }
+    }
 }
 
 /* =================================================================
@@ -1079,7 +1135,14 @@ function resetToUpload() {
     getEl('charts-container').innerHTML = '';
 }
 
-getEl('btn-back').addEventListener('click', resetToUpload);
+getEl('btn-back').addEventListener('click', async () => {
+    try {
+        await fetch('/api/reset', { method: 'POST' });
+    } catch (err) {
+        console.error('Failed to reset analysis state on server:', err);
+    }
+    resetToUpload();
+});
 
 /* =================================================================
    INIT

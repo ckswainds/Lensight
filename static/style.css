@@ -314,8 +314,6 @@ body {
 .sb-logo-mark {
     width: 34px; height: 34px;
     display: grid; place-items: center;
-    border-radius: 9px;
-    background: var(--grad-primary);
     flex-shrink: 0;
 }
 .sb-brand-name {
@@ -877,11 +875,7 @@ body {
 }
 .welcome-icon {
     width: 56px; height: 56px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.15));
-    border: 1px solid rgba(139,92,246,0.25);
     display: grid; place-items: center;
-    box-shadow: 0 4px 20px rgba(139,92,246,0.2);
 }
 .chat-welcome p { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; }
 .chat-suggestions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }

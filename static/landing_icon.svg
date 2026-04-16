@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+    <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1.5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+    </defs>
+
+    <!-- Document / Spreadsheet background -->
+    <g transform="translate(18, 15)">
+        <path d="M0 0 h25 l10 10 v50 h-35 v-60" fill="rgba(255,255,255,0.03)" stroke="#5c7399" stroke-width="2.5" stroke-linejoin="round"/>
+        <path d="M25 0 v10 h10" fill="none" stroke="#5c7399" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Horizontal grid lines -->
+        <g stroke="#4b6080" stroke-width="1.2" opacity="0.6">
+            <line x1="0" y1="20" x2="35" y2="20" />
+            <line x1="0" y1="35" x2="35" y2="35" />
+            <line x1="0" y1="50" x2="35" y2="50" />
+            <!-- Vertical grid lines -->
+            <line x1="12" y1="20" x2="12" y2="60" />
+            <line x1="24" y1="20" x2="24" y2="60" />
+        </g>
+    </g>
+
+    <!-- Solid distinct circle background with clear border -->
+    <circle cx="52" cy="45" r="28" fill="#0d1f33" stroke="#1e3a5f" stroke-width="5"/>
+    <circle cx="52" cy="45" r="23" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5" stroke-linecap="round"/>
+
+    <!-- Chart Line connecting the nodes -->
+    <path d="M22 62 l10 -14 l14 -22 l10 10 l16 -24" fill="none" stroke="#e8edf5" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+
+    <!-- Dots -->
+    <circle cx="22" cy="62" r="2.5" fill="#06b6d4"/> <!-- Outside left -->
+    <circle cx="32" cy="48" r="2.5" fill="#06b6d4"/> <!-- Inside circle -->
+    <circle cx="46" cy="26" r="2.5" fill="#06b6d4"/> <!-- Peak inside -->
+    <circle cx="56" cy="36" r="2.5" fill="#10b981"/> <!-- Valley (Green) -->
+
+    <!-- Glowing star outside top right -->
+    <g transform="translate(72, 12)" filter="url(#glow)">
+        <path d="M0 -8 Q0 0 8 0 Q0 0 0 8 Q0 0 -8 0 Q0 0 0 -8" fill="#10b981"/>
+        <circle cx="0" cy="0" r="1.5" fill="#ffffff"/>
+    </g>
+</svg>
