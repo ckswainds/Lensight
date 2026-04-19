@@ -20,7 +20,9 @@ class GeminiProvider:
             model=config.LLM_MODEL,
             temperature=config.LLM_TEMPERATURE,
             api_key=config.GEMINI_API_KEY,
-            streaming=True
+            streaming=True,
+            timeout=config.LLM_TIMEOUT,
+            max_retries=0
         ).with_config(
             run_name="gemini_primary",
             tags=["provider:gemini", f"model:{config.LLM_MODEL}"]

@@ -922,14 +922,24 @@ async function updateSummaryState(st) {
                 <span style="color: var(--purple); font-weight: 500; font-size: 0.95rem;">Synthesizing comprehensive AI narrative...</span>
             </div>`;
         } else if (status === 'error') {
-            const isQuota = st.summary_error === 'quota';
-            const errorMsg = isQuota
-                ? "<b>AI Synthesis Unavailable.</b> The narrative generation service is currently experiencing exceptionally high demand and is at full capacity."
-                : "<b>AI Narrative Generation Failed.</b> The AI service encountered an unexpected network disruption.";
-            const helpText = isQuota
-                ? "All automated financial scoring, historical trends, and structured analytics have been successfully generated and remain fully accessible."
-                : "All structured data and standalone metrics are fully available despite this error.";
-            const icon = isQuota ? "⏳" : "⚠️";
+            const err = st.summary_error || 'generic';
+            let errorMsg = "<b>AI Narrative Generation Failed.</b> The AI service encountered an unexpected error.";
+            let helpText = "All structured data and standalone metrics are fully available despite this error.";
+            let icon = "⚠️";
+
+            if (err === 'quota') {
+                errorMsg = "<b>AI Synthesis Unavailable.</b> The narrative generation service is currently experiencing exceptionally high demand and is at full capacity.";
+                helpText = "All automated financial scoring, historical trends, and structured analytics have been successfully generated and remain fully accessible.";
+                icon = "⏳";
+            } else if (err === 'timeout') {
+                errorMsg = "<b>AI Synthesis Timed Out.</b> The AI service took too long to generate the narrative (exceeded limit).";
+                helpText = "This often happens with complex data on high-latency networks. You can try refreshing or checking your provider status.";
+                icon = "⏱️";
+            } else if (err === 'config_missing') {
+                errorMsg = "<b>Configuration Missing.</b> Required API keys (Gemini or HuggingFace) are not configured in the environment.";
+                helpText = "Please ensure GEMINI_API_KEY and HUGGINGFACEHUB_API_TOKEN are set as Secrets in your HuggingFace Space Settings.";
+                icon = "🔑";
+            }
 
             sumEl.innerHTML = content + `<div style="margin-top: 1rem; padding: 1.25rem; background: rgba(245,158,11,0.06); border-radius: 8px; border: 1px solid rgba(245,158,11,0.25); display: flex; gap: 14px;">
                 <div style="font-size: 1.4rem;">${icon}</div>

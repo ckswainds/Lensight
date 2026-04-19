@@ -21,7 +21,8 @@ class HuggingFaceProvider:
         self.model = config.HF_FALLBACK_MODEL
         self.client = InferenceClient(
             provider="featherless-ai",
-            api_key=config.HUGGINGFACEHUB_API_TOKEN
+            api_key=config.HUGGINGFACEHUB_API_TOKEN,
+            timeout=config.LLM_TIMEOUT
         )
 
     def _to_chat_messages(self, messages) -> List[Dict[str, str]]:

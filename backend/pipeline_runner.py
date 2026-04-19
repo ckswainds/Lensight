@@ -302,11 +302,31 @@ def run_pipeline(
         def _generate_summary_task():
             try:
                 _status.update_summary(SummaryStatus.GENERATING)
+                
+                # Pre-flight check for API keys (common issue on HF)
+                from config import config as _cfg
+                missing_keys = []
+                if not _cfg.GEMINI_API_KEY: missing_keys.append("GEMINI_API_KEY")
+                if not _cfg.HUGGINGFACEHUB_API_TOKEN: missing_keys.append("HUGGINGFACEHUB_API_TOKEN")
+                
+                if missing_keys:
+                    logger.error(f"[SUMMARY] Missing required API keys: {', '.join(missing_keys)}")
+                    _status.update_summary(SummaryStatus.ERROR, error="config_missing")
+                    return
+
                 import json as _json
                 from llm.narrative_generator import NarrativeGenerator
-                logger.info("Generating LLM financial narrative summary...")
+                
+                logger.info("[SUMMARY] Starting LLM financial narrative synthesis...")
                 # We use the analysis_data closure
-                narrative = NarrativeGenerator().generate_narrative(financial_data=analysis_data)
+                gen = NarrativeGenerator()
+                
+                logger.info("[SUMMARY] Invoking LLM router (timeout: %ds)...", _cfg.LLM_TIMEOUT)
+                narrative = gen.generate_narrative(financial_data=analysis_data)
+                
+                if not narrative:
+                    raise ValueError("LLM returned empty narrative")
+
                 # Patch analysis.json with the generated summary
                 analysis_path = processed_dir / "analysis.json"
                 with open(analysis_path, "r", encoding="utf-8") as _f:
@@ -314,13 +334,16 @@ def run_pipeline(
                 _doc["llm_financial_summary"] = narrative
                 with open(analysis_path, "w", encoding="utf-8") as _f:
                     _json.dump(_doc, _f, indent=2, ensure_ascii=False)
-                logger.info("LLM narrative summary injected into analysis.json (%d chars)", len(narrative))
+                
+                logger.info("[SUMMARY] Narrative synthesis complete (%d chars)", len(narrative))
                 _status.update_summary(SummaryStatus.READY)
             except Exception as _narr_exc:
-                logger.warning("LLM narrative generation failed (non-fatal): %s", _narr_exc)
+                logger.error(f"[SUMMARY] Narrative generation failed: {type(_narr_exc).__name__}: {_narr_exc}")
                 err_str = str(_narr_exc).lower()
-                if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
+                if any(x in err_str for x in ['429', 'quota', 'exhausted', 'rate']):
                     _status.update_summary(SummaryStatus.ERROR, error="quota")
+                elif any(x in err_str for x in ['timeout', 'deadline', 'timed out']):
+                    _status.update_summary(SummaryStatus.ERROR, error="timeout")
                 else:
                     _status.update_summary(SummaryStatus.ERROR, error="generic")
 

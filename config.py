@@ -24,6 +24,9 @@ class Config:
     HF_FALLBACK_MAX_TOKENS = int(os.getenv("HF_FALLBACK_MAX_TOKENS", "1500"))
     HF_FALLBACK_TEMPERATURE = float(os.getenv("HF_FALLBACK_TEMPERATURE", "0.3"))
     
+    # Global LLM Timeout (seconds)
+    LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
+    
     # RAG Settings — HuggingFace Inference API embedding model
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
