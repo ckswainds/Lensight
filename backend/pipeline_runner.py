@@ -214,18 +214,10 @@ def flush_all_data(uploads_dir: Path, raw_dir: Path, processed_dir: Path) -> Non
     _flush_dir(raw_dir)
     _flush_dir(processed_dir)
 
-    # Flush uploads — remove xlsx only, keep PDFs for RAG
-    if uploads_dir.exists():
-        for item in uploads_dir.iterdir():
-            if item.is_file() and item.suffix.lower() in (".xlsx", ".xls"):
-                item.unlink()
-                logger.debug("Removed upload: %s", item.name)
-            elif item.is_dir():
-                shutil.rmtree(item)
-    else:
-        uploads_dir.mkdir(parents=True, exist_ok=True)
+    # Flush uploads — remove EVERYTHING (xlsx, pdf, subdirs) to ensure clean state
+    _flush_dir(uploads_dir)
 
-    logger.info("Flush complete — PDFs preserved in uploads/.")
+    logger.info("Flush complete — uploads, raw, and processed directories cleared.")
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +226,7 @@ def flush_all_data(uploads_dir: Path, raw_dir: Path, processed_dir: Path) -> Non
 
 def run_pipeline(
     excel_filename: str,
+    pdf_filename: str | None,
     uploads_dir: Path,
     raw_dir:      Path,
     processed_dir: Path,
@@ -252,10 +245,7 @@ def run_pipeline(
         with _status._lock:
             _status.started_at = datetime.now().isoformat(timespec="seconds")
 
-        # Note: flush_all_data keeps PDFs but deletes old xlsx. Wait! We must NOT flush uploads 
-        # if FastAPI just saved our new files there! We will skip flush_all_data for uploads_dir here
-        # or do it carefully. Actually, FastAPI should flush BEFORE saving.
-        # So we just flush raw and processed here.
+        # Redundant flushing (FastAPI handles it before saving), but kept for safety
         _flush_dir(raw_dir)
         _flush_dir(processed_dir)
 
@@ -309,76 +299,79 @@ def run_pipeline(
         logger.info("Core analysis complete. Dashboard can now load. Starting background AI generation...")
 
         # ── Generate LLM Narrative Summary (Background) ──
-        try:
-            _status.update_summary(SummaryStatus.GENERATING)
-            import json as _json
-            from llm.narrative_generator import NarrativeGenerator
-            logger.info("Generating LLM financial narrative summary...")
-            narrative = NarrativeGenerator().generate_narrative(financial_data=analysis_data)
-            # Patch analysis.json with the generated summary
-            analysis_path = processed_dir / "analysis.json"
-            with open(analysis_path, "r", encoding="utf-8") as _f:
-                _doc = _json.load(_f)
-            _doc["llm_financial_summary"] = narrative
-            with open(analysis_path, "w", encoding="utf-8") as _f:
-                _json.dump(_doc, _f, indent=2, ensure_ascii=False)
-            logger.info("LLM narrative summary injected into analysis.json (%d chars)", len(narrative))
-            _status.update_summary(SummaryStatus.READY)
-        except Exception as _narr_exc:
-            logger.warning("LLM narrative generation failed (non-fatal): %s", _narr_exc)
-            err_str = str(_narr_exc).lower()
-            if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
-                _status.update_summary(SummaryStatus.ERROR, error="quota")
-            else:
-                _status.update_summary(SummaryStatus.ERROR, error="generic")
-
-        # ── Stage: RAG_INDEXING ──────────────────────────────────
-        # First, check if PDF exists — only proceed if one was uploaded
-        global _rag_store
-        _rag_store = None
-        pdf_files = list(uploads_dir.glob("*.pdf"))
-        
-        if not pdf_files:
-            # No PDF uploaded — skip RAG entirely
-            _status.update_rag(RAGStatus.IDLE, 0, "No annual report uploaded")
-            logger.info("No PDF found for RAG — staying in IDLE state.")
-        else:
-            # PDF exists — proceed with indexing
-            pdf_path = pdf_files[0]
-            logger.info("PDF found for RAG: %s", pdf_path.name)
-            
+        def _generate_summary_task():
             try:
-                # ── LOADING: Read PDF
+                _status.update_summary(SummaryStatus.GENERATING)
+                import json as _json
+                from llm.narrative_generator import NarrativeGenerator
+                logger.info("Generating LLM financial narrative summary...")
+                # We use the analysis_data closure
+                narrative = NarrativeGenerator().generate_narrative(financial_data=analysis_data)
+                # Patch analysis.json with the generated summary
+                analysis_path = processed_dir / "analysis.json"
+                with open(analysis_path, "r", encoding="utf-8") as _f:
+                    _doc = _json.load(_f)
+                _doc["llm_financial_summary"] = narrative
+                with open(analysis_path, "w", encoding="utf-8") as _f:
+                    _json.dump(_doc, _f, indent=2, ensure_ascii=False)
+                logger.info("LLM narrative summary injected into analysis.json (%d chars)", len(narrative))
+                _status.update_summary(SummaryStatus.READY)
+            except Exception as _narr_exc:
+                logger.warning("LLM narrative generation failed (non-fatal): %s", _narr_exc)
+                err_str = str(_narr_exc).lower()
+                if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
+                    _status.update_summary(SummaryStatus.ERROR, error="quota")
+                else:
+                    _status.update_summary(SummaryStatus.ERROR, error="generic")
+
+        summary_thread = threading.Thread(target=_generate_summary_task, daemon=True, name="lensight-summary")
+        summary_thread.start()
+
+        # ── Stage: RAG_INDEXING (Background) ─────────────────────────
+        def _rag_indexing_task():
+            global _rag_store
+            _rag_store = None
+            
+            if not pdf_filename:
+                _status.update_rag(RAGStatus.IDLE, 0, "No annual report uploaded")
+                logger.info("No PDF filename provided — skipping RAG indexing.")
+                return
+
+            pdf_path = uploads_dir / pdf_filename
+            if not pdf_path.exists():
+                logger.warning("PDF filename provided but file not found: %s", pdf_path)
+                _status.update_rag(RAGStatus.ERROR, 0, "Error: PDF file missing")
+                return
+
+            try:
                 _status.update_rag(RAGStatus.LOADING, 5, "Reading annual report...")
                 from ingestion.unstructured_loader import UnstructuredLoader
                 chunks = UnstructuredLoader().load_pdf(str(pdf_path))
-                logger.info(f"PDF loaded with {len(chunks)} chunks")
                 
-                # ── CHUNKING: Already done by loader
                 _status.update_rag(RAGStatus.CHUNKING, 15, f"Processing {len(chunks)} document chunks...")
-                logger.info(f"[RAG] {len(chunks)} chunks ready for embedding")
                 
-                # ── EMBEDDING: Build vector store with progress tracking
                 def progress_callback(current: int, total: int, label: str):
-                    """Update progress during embedding."""
                     if total > 0:
-                        progress_pct = 30 + int((current / total) * 50)  # 30-80% range
+                        progress_pct = 30 + int((current / total) * 50)
                         _status.update_rag(RAGStatus.EMBEDDING, progress_pct, f"Embedding: {current}/{total} chunks")
-                        logger.debug(f"[RAG] Embedding progress: {current}/{total} ({progress_pct}%)")
                 
                 from rag.vector_store import LensightVectorStore
                 vs = LensightVectorStore(batch_size=10, num_workers=4)
                 vs.build_from_documents(chunks, progress_callback=progress_callback)
                 
-                # ── STORING: Complete
                 _status.update_rag(RAGStatus.STORING, 85, "Finalizing index...")
                 _rag_store = vs
                 _status.update_rag(RAGStatus.READY, 100, "Annual report ready")
                 logger.info("RAG indexing finished successfully.")
-                
             except Exception as rag_exc:
-                logger.warning("RAG indexing failed in background: %s", rag_exc)
+                logger.warning("RAG indexing failed: %s", rag_exc)
                 _status.update_rag(RAGStatus.ERROR, 0, f"Error: {str(rag_exc)[:50]}")
+
+        rag_thread = threading.Thread(target=_rag_indexing_task, daemon=True, name="lensight-rag")
+        rag_thread.start()
+
+        xlsx_path = uploads_dir / excel_filename
+        logger.info("Using Excel file: %s", xlsx_path)
 
     except Exception as exc:
         tb = traceback.format_exc()
@@ -388,6 +381,7 @@ def run_pipeline(
 
 def start_pipeline(
     excel_filename: str,
+    pdf_filename: str | None,
     uploads_dir: Path,
     raw_dir: Path,
     processed_dir: Path,
@@ -406,6 +400,7 @@ def start_pipeline(
         try:
             run_pipeline(
                 excel_filename,
+                pdf_filename,
                 uploads_dir, raw_dir, processed_dir,
             )
         except Exception:

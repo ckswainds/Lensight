@@ -28,5 +28,17 @@ template.py
 /test_parallel_chunking.py
 /test_query_analyzer.py
 /test_streaming_diagnostic.py
+/test_extra_stats.py
+/test_fallback.py
+/test_hf_and_fallback.py
+/test_hf_quality.py
+/test_inference.py
+/test_stats.py
+
+# Stats output files
+/extra_stats_output.txt
+/stats_output.txt
 
 # Readmes and markdown files (not required in production)
+INTERVIEW_NOTES.md
+project_notes.md

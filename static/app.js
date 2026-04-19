@@ -9,84 +9,84 @@
 const _charts = new Map();
 
 // ── State ──
-let cachedData       = null;
-let chatHistory      = [];
+let cachedData = null;
+let chatHistory = [];
 let activePeriodYears = 0;   // 0 = All
-let pollInterval     = null;
-let ragPollInterval  = null;
-let currentPage      = 'overview';
+let pollInterval = null;
+let ragPollInterval = null;
+let currentPage = 'overview';
 
 // ── All ratio categories and their metrics ──
 const METRIC_GROUPS = [
     {
         id: 'profitability', label: 'Profitability', color: '#8b5cf6',
         metrics: [
-            { key: 'net_profit_margin',   label: 'Net Profit Margin',   unit: '%',    type: 'line' },
-            { key: 'op_profit_margin',    label: 'Operating Margin',    unit: '%',    type: 'line' },
-            { key: 'ebitda_margin',       label: 'EBITDA Margin',       unit: '%',    type: 'line' },
-            { key: 'roe',                 label: 'ROE',                 unit: '%',    type: 'bar'  },
-            { key: 'roce',                label: 'ROCE',                unit: '%',    type: 'bar'  },
-            { key: 'roa',                 label: 'ROA',                 unit: '%',    type: 'bar'  },
+            { key: 'net_profit_margin', label: 'Net Profit Margin', unit: '%', type: 'line' },
+            { key: 'op_profit_margin', label: 'Operating Margin', unit: '%', type: 'line' },
+            { key: 'ebitda_margin', label: 'EBITDA Margin', unit: '%', type: 'line' },
+            { key: 'roe', label: 'ROE', unit: '%', type: 'bar' },
+            { key: 'roce', label: 'ROCE', unit: '%', type: 'bar' },
+            { key: 'roa', label: 'ROA', unit: '%', type: 'bar' },
         ]
     },
     {
         id: 'valuation', label: 'Valuation', color: '#3b82f6',
         metrics: [
-            { key: 'pe_ratio',        label: 'P/E Ratio',        unit: 'x',  type: 'bar' },
-            { key: 'pb_ratio',        label: 'P/B Ratio',        unit: 'x',  type: 'bar' },
-            { key: 'ev_ebitda',       label: 'EV / EBITDA',      unit: 'x',  type: 'bar' },
+            { key: 'pe_ratio', label: 'P/E Ratio', unit: 'x', type: 'bar' },
+            { key: 'pb_ratio', label: 'P/B Ratio', unit: 'x', type: 'bar' },
+            { key: 'ev_ebitda', label: 'EV / EBITDA', unit: 'x', type: 'bar' },
             { key: 'mktcap_to_sales', label: 'Market Cap / Sales', unit: 'x', type: 'bar' },
         ]
     },
     {
         id: 'leverage', label: 'Leverage', color: '#f59e0b',
         metrics: [
-            { key: 'debt_to_equity',   label: 'Debt / Equity',      unit: 'x',  type: 'bar' },
-            { key: 'debt_to_assets',   label: 'Debt / Assets',      unit: 'x',  type: 'bar' },
-            { key: 'interest_coverage', label: 'Interest Coverage',  unit: 'x',  type: 'bar' },
+            { key: 'debt_to_equity', label: 'Debt / Equity', unit: 'x', type: 'bar' },
+            { key: 'debt_to_assets', label: 'Debt / Assets', unit: 'x', type: 'bar' },
+            { key: 'interest_coverage', label: 'Interest Coverage', unit: 'x', type: 'bar' },
         ]
     },
     {
         id: 'liquidity', label: 'Liquidity', color: '#10b981',
         metrics: [
-            { key: 'current_ratio',   label: 'Current Ratio',   unit: 'x',  type: 'bar' },
-            { key: 'cash_ratio',      label: 'Cash Ratio',      unit: 'x',  type: 'bar' },
+            { key: 'current_ratio', label: 'Current Ratio', unit: 'x', type: 'bar' },
+            { key: 'cash_ratio', label: 'Cash Ratio', unit: 'x', type: 'bar' },
         ]
     },
     {
         id: 'efficiency', label: 'Efficiency', color: '#06b6d4',
         metrics: [
-            { key: 'asset_turnover',          label: 'Asset Turnover',     unit: 'x',    type: 'bar'  },
-            { key: 'inventory_turnover_days', label: 'Inventory Days',     unit: ' days', type: 'bar' },
-            { key: 'receivables_days',        label: 'Receivables Days',   unit: ' days', type: 'bar' },
+            { key: 'asset_turnover', label: 'Asset Turnover', unit: 'x', type: 'bar' },
+            { key: 'inventory_turnover_days', label: 'Inventory Days', unit: ' days', type: 'bar' },
+            { key: 'receivables_days', label: 'Receivables Days', unit: ' days', type: 'bar' },
         ]
     },
     {
         id: 'per_share', label: 'Per Share', color: '#ec4899',
         metrics: [
-            { key: 'eps',                  label: 'EPS',               unit: '',  type: 'bar' },
-            { key: 'book_value_per_share', label: 'Book Value / Share', unit: '',  type: 'bar' },
-            { key: 'dividend_per_share',   label: 'Dividend / Share',   unit: '',  type: 'bar' },
+            { key: 'eps', label: 'EPS', unit: '', type: 'bar' },
+            { key: 'book_value_per_share', label: 'Book Value / Share', unit: '', type: 'bar' },
+            { key: 'dividend_per_share', label: 'Dividend / Share', unit: '', type: 'bar' },
         ]
     },
 ];
 
 // KPIs shown in the Overview quick-panel (category, ratioKey)
 const OVERVIEW_KPIS = [
-    ['profitability', 'roe',              'ROE'],
-    ['profitability', 'roce',             'ROCE'],
-    ['profitability', 'net_profit_margin','Net Profit Margin'],
-    ['profitability', 'ebitda_margin',    'EBITDA Margin'],
-    ['valuation',     'pe_ratio',         'P/E Ratio'],
-    ['valuation',     'pb_ratio',         'P/B Ratio'],
-    ['valuation',     'ev_ebitda',        'EV/EBITDA'],
-    ['leverage',      'debt_to_equity',   'Debt/Equity'],
-    ['leverage',      'interest_coverage','Interest Coverage'],
-    ['liquidity',     'current_ratio',    'Current Ratio'],
-    ['liquidity',     'cash_ratio',       'Cash Ratio'],
-    ['per_share',     'eps',              'EPS'],
-    ['per_share',     'book_value_per_share','Book Value/Share'],
-    ['efficiency',    'asset_turnover',   'Asset Turnover'],
+    ['profitability', 'roe', 'ROE'],
+    ['profitability', 'roce', 'ROCE'],
+    ['profitability', 'net_profit_margin', 'Net Profit Margin'],
+    ['profitability', 'ebitda_margin', 'EBITDA Margin'],
+    ['valuation', 'pe_ratio', 'P/E Ratio'],
+    ['valuation', 'pb_ratio', 'P/B Ratio'],
+    ['valuation', 'ev_ebitda', 'EV/EBITDA'],
+    ['leverage', 'debt_to_equity', 'Debt/Equity'],
+    ['leverage', 'interest_coverage', 'Interest Coverage'],
+    ['liquidity', 'current_ratio', 'Current Ratio'],
+    ['liquidity', 'cash_ratio', 'Cash Ratio'],
+    ['per_share', 'eps', 'EPS'],
+    ['per_share', 'book_value_per_share', 'Book Value/Share'],
+    ['efficiency', 'asset_turnover', 'Asset Turnover'],
 ];
 
 /* =================================================================
@@ -108,14 +108,14 @@ function labelClass(label) {
 
 function trendMeta(trend) {
     const map = {
-        strong_uptrend:   { icon: '↑',  cls: 'trend-up',    text: 'Strong Uptrend'   },
-        uptrend:          { icon: '↗',  cls: 'trend-mup',   text: 'Uptrend'          },
-        improving:        { icon: '↗',  cls: 'trend-mup',   text: 'Improving'        },
-        stable:           { icon: '→',  cls: 'trend-flat',  text: 'Stable'           },
-        declining:        { icon: '↘',  cls: 'trend-mdown', text: 'Declining'        },
-        downtrend:        { icon: '↘',  cls: 'trend-mdown', text: 'Downtrend'        },
-        strong_downtrend: { icon: '↓',  cls: 'trend-down',  text: 'Strong Downtrend'},
-        volatile:         { icon: '⟡',  cls: 'trend-vol',   text: 'Volatile'        },
+        strong_uptrend: { icon: '↑', cls: 'trend-up', text: 'Strong Uptrend' },
+        uptrend: { icon: '↗', cls: 'trend-mup', text: 'Uptrend' },
+        improving: { icon: '↗', cls: 'trend-mup', text: 'Improving' },
+        stable: { icon: '→', cls: 'trend-flat', text: 'Stable' },
+        declining: { icon: '↘', cls: 'trend-mdown', text: 'Declining' },
+        downtrend: { icon: '↘', cls: 'trend-mdown', text: 'Downtrend' },
+        strong_downtrend: { icon: '↓', cls: 'trend-down', text: 'Strong Downtrend' },
+        volatile: { icon: '⟡', cls: 'trend-vol', text: 'Volatile' },
     };
     return map[trend] || { icon: '–', cls: 'trend-flat', text: trend || '–' };
 }
@@ -249,7 +249,7 @@ getEl('upload-form').addEventListener('submit', async (e) => {
     const excelFile = getEl('excel-input').files[0];
     if (!excelFile) return;
 
-    const btn     = getEl('analyze-btn');
+    const btn = getEl('analyze-btn');
     const btnText = getEl('analyze-btn-text');
     const tracker = getEl('processing-tracker');
 
@@ -280,19 +280,19 @@ getEl('upload-form').addEventListener('submit', async (e) => {
 
 async function pollStatus() {
     try {
-        const res = await fetch('/api/status');
-        const st  = await res.json();
+        const res = await fetch('/api/status', { cache: 'no-store' });
+        const st = await res.json();
 
         // Update progress bar
         getEl('pipeline-progress').style.width = `${st.progress}%`;
-        getEl('pipeline-stage').textContent    = st.label;
-        getEl('pipeline-pct').textContent      = `${st.progress}%`;
+        getEl('pipeline-stage').textContent = st.label;
+        getEl('pipeline-pct').textContent = `${st.progress}%`;
 
         // RAG tracker
         if (st.rag_status !== 'idle') {
             getEl('rag-tracker-container').classList.remove('hidden');
             getEl('rag-progress').style.width = `${st.rag_progress}%`;
-            getEl('rag-stage').textContent    = st.rag_label;
+            getEl('rag-stage').textContent = st.rag_label;
         }
 
         if (st.stage === 'done') {
@@ -314,7 +314,7 @@ async function pollStatus() {
 
 async function loadDashboard(statusData) {
     try {
-        const res = await fetch('/api/analysis');
+        const res = await fetch('/api/analysis', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         cachedData = await res.json();
     } catch (err) {
@@ -324,17 +324,17 @@ async function loadDashboard(statusData) {
     }
 
     const company = cachedData.company || statusData?.company || '—';
-    const periods  = cachedData.periods || [];
-    const latest   = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
-    const scores   = cachedData.summary_scores || {};
+    const periods = cachedData.periods || [];
+    const latest = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
+    const scores = cachedData.summary_scores || {};
 
     // Sidebar
     getEl('sb-company-name').textContent = company;
-    getEl('sb-period').textContent       = `Latest: ${latest}`;
+    getEl('sb-period').textContent = `Latest: ${latest}`;
     const scoreVal = scores.overall_score;
-    const sbScore  = getEl('sb-overall-score');
+    const sbScore = getEl('sb-overall-score');
     sbScore.textContent = scoreVal != null ? scoreVal.toFixed(1) + ' / 5' : '—';
-    sbScore.className   = 'sb-score-value ' + (scoreVal != null ? scoreColorClass(scoreVal) : '');
+    sbScore.className = 'sb-score-value ' + (scoreVal != null ? scoreColorClass(scoreVal) : '');
 
     // Topbar
     getEl('topbar-company').textContent = company;
@@ -394,9 +394,9 @@ document.querySelectorAll('.sb-nav-item').forEach(el => {
 function renderOverview() {
     if (!cachedData) return;
 
-    const scores  = cachedData.summary_scores || {};
-    const periods  = cachedData.periods || [];
-    const latest   = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
+    const scores = cachedData.summary_scores || {};
+    const periods = cachedData.periods || [];
+    const latest = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
 
     // Score row
     const scoreRow = getEl('score-row');
@@ -416,12 +416,12 @@ function renderOverview() {
     // Category scores
     const cats = [
         ['profitability', 'Profitability'],
-        ['valuation',     'Valuation'],
-        ['leverage',      'Leverage'],
-        ['liquidity',     'Liquidity'],
-        ['efficiency',    'Efficiency'],
-        ['per_share',     'Per Share'],
-        ['growth',        'Growth'],
+        ['valuation', 'Valuation'],
+        ['leverage', 'Leverage'],
+        ['liquidity', 'Liquidity'],
+        ['efficiency', 'Efficiency'],
+        ['per_share', 'Per Share'],
+        ['growth', 'Growth'],
     ];
     const cGrid = document.createElement('div');
     cGrid.className = 'category-scores-grid';
@@ -452,11 +452,11 @@ function renderOverview() {
         if (!catData) return;
         const ratio = catData[key];
         if (!ratio) return;
-        const val   = ratio.latest_value;
-        const lbl   = ratio.latest_label || '';
+        const val = ratio.latest_value;
+        const lbl = ratio.latest_label || '';
         const trend = ratio.trend || '';
-        const tm    = trendMeta(trend);
-        const card  = document.createElement('div');
+        const tm = trendMeta(trend);
+        const card = document.createElement('div');
         card.className = 'kpi-card';
 
         // Determine unit from METRIC_GROUPS
@@ -481,7 +481,7 @@ function renderOverview() {
     });
 
     // AI Summary
-    const summaryEl  = getEl('ai-summary');
+    const summaryEl = getEl('ai-summary');
     const llmSummary = cachedData.llm_financial_summary;
     if (llmSummary && llmSummary.trim()) {
         summaryEl.innerHTML = marked.parse(llmSummary);
@@ -495,20 +495,20 @@ function renderOverview() {
 
 function buildQuickSummary() {
     if (!cachedData) return '<em>No data</em>';
-    const scores   = cachedData.summary_scores || {};
-    const company  = cachedData.company || '';
-    const overall  = scores.overall_score;
-    const prof     = cachedData.profitability || {};
-    const periods  = cachedData.periods || [];
-    const from     = periods[0] || '';
-    const to       = periods[periods.length - 1] || '';
+    const scores = cachedData.summary_scores || {};
+    const company = cachedData.company || '';
+    const overall = scores.overall_score;
+    const prof = cachedData.profitability || {};
+    const periods = cachedData.periods || [];
+    const from = periods[0] || '';
+    const to = periods[periods.length - 1] || '';
 
     let html = `<p><strong>${company}</strong> — Analysis from <em>${from}</em> to <em>${to}</em>.</p>`;
     if (overall !== null && overall !== undefined) {
         html += `<p>Overall investment quality score: <strong class="${scoreColorClass(overall)}">${overall.toFixed(1)} / 5</strong>.</p>`;
     }
     html += '<ul>';
-    [['roe','ROE'], ['roce','ROCE'], ['net_profit_margin','Net Profit Margin'], ['ebitda_margin','EBITDA Margin']].forEach(([k, lbl]) => {
+    [['roe', 'ROE'], ['roce', 'ROCE'], ['net_profit_margin', 'Net Profit Margin'], ['ebitda_margin', 'EBITDA Margin']].forEach(([k, lbl]) => {
         const r = prof[k];
         if (r && r.latest_value != null) {
             const tm = trendMeta(r.trend);
@@ -521,7 +521,7 @@ function buildQuickSummary() {
 
 function renderGrowthTable() {
     const growth = cachedData.growth || {};
-    const wrap   = getEl('growth-table');
+    const wrap = getEl('growth-table');
     if (!Object.keys(growth).length) { wrap.innerHTML = '<p style="padding:16px;color:var(--text-muted)">No CAGR data available.</p>'; return; }
 
     // Build structured data: metric → {3y, 5y, 7y, 10y}
@@ -554,7 +554,7 @@ function renderGrowthTable() {
             const g = data[w];
             if (g) {
                 const val = g.value != null ? g.value.toFixed(1) + '%' : '—';
-                html += `<td class="val-cell" style="color:${g.value > 0 ? '#34d399':'#ef4444'}">${val}</td>`;
+                html += `<td class="val-cell" style="color:${g.value > 0 ? '#34d399' : '#ef4444'}">${val}</td>`;
                 html += `<td><span class="kpi-label ${labelClass(g.label)}">${g.label || '—'}</span></td>`;
             } else {
                 html += `<td class="val-cell">—</td><td>—</td>`;
@@ -611,7 +611,7 @@ function buildAllCharts(activeFilter) {
     const container = getEl('charts-container');
     container.innerHTML = '';
 
-    const periods    = cachedData.periods || [];
+    const periods = cachedData.periods || [];
     const filteredPs = filterPeriods(periods, activePeriodYears);
 
     METRIC_GROUPS.forEach(group => {
@@ -626,7 +626,7 @@ function buildAllCharts(activeFilter) {
 
         // Category section
         const section = document.createElement('div');
-        section.className  = 'analysis-category-section';
+        section.className = 'analysis-category-section';
         section.dataset.cat = group.id;
         if (activeFilter !== 'all' && activeFilter !== group.id) section.style.display = 'none';
 
@@ -643,14 +643,14 @@ function buildAllCharts(activeFilter) {
         const grid = section.querySelector('.charts-grid');
 
         hasData.forEach(metric => {
-            const ratioData  = cachedData[group.id]?.[metric.key];
+            const ratioData = cachedData[group.id]?.[metric.key];
             if (!ratioData) return;
 
-            const latestVal  = ratioData.latest_value;
-            const latestLbl  = ratioData.latest_label || '';
-            const trend      = ratioData.trend || '';
-            const tm         = trendMeta(trend);
-            const chartId    = `chart-${group.id}-${metric.key}`;
+            const latestVal = ratioData.latest_value;
+            const latestLbl = ratioData.latest_label || '';
+            const trend = ratioData.trend || '';
+            const tm = trendMeta(trend);
+            const chartId = `chart-${group.id}-${metric.key}`;
 
             const card = document.createElement('div');
             card.className = 'chart-card';
@@ -680,7 +680,7 @@ function buildAllCharts(activeFilter) {
 
 function renderMiniChart(chartId, metric, group, periods) {
     const series = extractSeries(cachedData, group.id, metric.key, periods);
-    const labels  = periodLabels(periods);
+    const labels = periodLabels(periods);
 
     // Gradient fill for line charts
     const canvas = getEl(chartId);
@@ -754,8 +754,8 @@ let ragIndexingStartTime = null;
 /** Format seconds into human-readable remaining time */
 function formatETA(seconds) {
     if (!isFinite(seconds) || seconds <= 0) return '';
-    if (seconds < 10)  return '< 10 seconds remaining';
-    if (seconds < 60)  return `~${Math.round(seconds)}s remaining`;
+    if (seconds < 10) return '< 10 seconds remaining';
+    if (seconds < 60) return `~${Math.round(seconds)}s remaining`;
     const mins = Math.round(seconds / 60);
     return `~${mins} min${mins > 1 ? 's' : ''} remaining`;
 }
@@ -786,11 +786,11 @@ function showSidebarPanel(panelId) {
  * @param {object} st — full status object from /api/status
  */
 function updateRagState(st) {
-    const ragStatus   = st.rag_status || 'idle';
+    const ragStatus = st.rag_status || 'idle';
     const ragProgress = st.rag_progress || 0;
-    const ragLabel    = st.rag_label   || '';
+    const ragLabel = st.rag_label || '';
 
-    const dot    = getEl('rag-status-dot');
+    const dot = getEl('rag-status-dot');
     const sbText = getEl('sb-rag-text');
     const topBadge = getEl('topbar-rag-badge');
     const chatPill = getEl('chat-rag-pill');
@@ -799,13 +799,13 @@ function updateRagState(st) {
     const isIndexing = INDEXING_STATES.includes(ragStatus);
 
     // ── Compact dot + label in SB header row ──
-    const dotClsMap  = { ready: 'ready', error: 'error', idle: 'idle' };
-    const dotCls     = isIndexing ? 'indexing' : (dotClsMap[ragStatus] || 'idle');
+    const dotClsMap = { ready: 'ready', error: 'error', idle: 'idle' };
+    const dotCls = isIndexing ? 'indexing' : (dotClsMap[ragStatus] || 'idle');
     if (dot) dot.className = `rag-dot ${dotCls}`;
 
     // ── Sidebar text (one-liner) ──
     const sbTextMap = {
-        idle:  'No annual report uploaded',
+        idle: 'No annual report uploaded',
         ready: 'Annual report indexed ✓',
         error: 'PDF processing unavailable',
     };
@@ -813,9 +813,9 @@ function updateRagState(st) {
 
     // ── Topbar badge + chat pill ──
     const badgeMap = {
-        idle:  { text: '○ Financials Only',            style: '' },
-        ready: { text: '● RAG Enhanced',               style: 'color:#10b981;border-color:rgba(16,185,129,0.3)' },
-        error: { text: '◐ Financials Only',            style: 'color:#f59e0b;border-color:rgba(245,158,11,0.25)' },
+        idle: { text: '○ Financials Only', style: '' },
+        ready: { text: '● RAG Enhanced', style: 'color:#10b981;border-color:rgba(16,185,129,0.3)' },
+        error: { text: '◐ Financials Only', style: 'color:#f59e0b;border-color:rgba(245,158,11,0.25)' },
     };
     const indexingBadge = { text: `● Indexing Report (${ragProgress}%)`, style: 'color:#06b6d4;border-color:rgba(6,182,212,0.3)' };
     const badge = isIndexing ? indexingBadge : (badgeMap[ragStatus] || badgeMap.idle);
@@ -830,22 +830,22 @@ function updateRagState(st) {
         showSidebarPanel('rag-progress-panel');
 
         // Update progress bar
-        const fill  = getEl('rag-prog-fill');
-        const pct   = getEl('rag-prog-pct');
+        const fill = getEl('rag-prog-fill');
+        const pct = getEl('rag-prog-pct');
         const stage = getEl('rag-prog-stage');
-        const eta   = getEl('rag-prog-eta');
+        const eta = getEl('rag-prog-eta');
 
-        if (fill)  fill.style.width  = `${ragProgress}%`;
-        if (pct)   pct.textContent   = `${ragProgress}%`;
+        if (fill) fill.style.width = `${ragProgress}%`;
+        if (pct) pct.textContent = `${ragProgress}%`;
         if (stage) stage.textContent = ragLabel || 'Processing...';
 
         // ETA calculation
         if (eta) {
             if (ragProgress > 2 && ragIndexingStartTime) {
                 const elapsedSec = (Date.now() - ragIndexingStartTime) / 1000;
-                const rate       = ragProgress / elapsedSec; // % per second
-                const remaining  = rate > 0 ? (100 - ragProgress) / rate : Infinity;
-                eta.textContent  = formatETA(remaining);
+                const rate = ragProgress / elapsedSec; // % per second
+                const remaining = rate > 0 ? (100 - ragProgress) / rate : Infinity;
+                eta.textContent = formatETA(remaining);
             } else {
                 eta.textContent = 'Estimating time...';
             }
@@ -875,30 +875,30 @@ function pollBackgroundTasks() {
     if (ragPollInterval) clearInterval(ragPollInterval);
     ragPollInterval = setInterval(async () => {
         try {
-            const res = await fetch('/api/status');
-            const st  = await res.json();
+            const res = await fetch('/api/status', { cache: 'no-store' });
+            const st = await res.json();
             updateRagState(st);
             await updateSummaryState(st);
-            
+
             // Terminal states
             const ragDone = ['ready', 'error', 'idle'].includes(st.rag_status);
             const sumDone = ['ready', 'error', 'idle'].includes(st.summary_status || 'idle');
-            
+
             if (ragDone && sumDone) {
                 clearInterval(ragPollInterval);
             }
-        } catch (_) {}
+        } catch (_) { }
     }, 2000);
 }
 
 /** Handles dynamic updates of the AI Summary box on the Overview page */
 async function updateSummaryState(st) {
     const status = st.summary_status || 'idle';
-    
+
     // If it's ready, but we don't have the text cached yet, fetch it.
     if (status === 'ready' && cachedData && !cachedData.llm_financial_summary) {
         try {
-            const res = await fetch('/api/analysis');
+            const res = await fetch('/api/analysis', { cache: 'no-store' });
             if (res.ok) {
                 const fresh = await res.json();
                 if (fresh.llm_financial_summary) {
@@ -906,7 +906,7 @@ async function updateSummaryState(st) {
                     if (currentPage === 'overview') renderOverview();
                 }
             }
-        } catch (_) {}
+        } catch (_) { }
         return;
     }
 
@@ -914,7 +914,7 @@ async function updateSummaryState(st) {
     if (cachedData && !cachedData.llm_financial_summary) {
         const sumEl = getEl('ai-summary');
         if (!sumEl) return;
-        
+
         let content = buildQuickSummary();
         if (status === 'generating') {
             sumEl.innerHTML = `<div style="padding: 1.25rem; background: rgba(139,92,246,0.06); border-radius: 8px; border: 1px solid rgba(139,92,246,0.15); display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; min-height: 120px;">
@@ -923,12 +923,12 @@ async function updateSummaryState(st) {
             </div>`;
         } else if (status === 'error') {
             const isQuota = st.summary_error === 'quota';
-            const errorMsg = isQuota 
-                ? "<b>AI Synthesis Unavailable.</b> The narrative generation service is currently experiencing exceptionally high demand and is at full capacity." 
+            const errorMsg = isQuota
+                ? "<b>AI Synthesis Unavailable.</b> The narrative generation service is currently experiencing exceptionally high demand and is at full capacity."
                 : "<b>AI Narrative Generation Failed.</b> The AI service encountered an unexpected network disruption.";
             const helpText = isQuota
-                ? "All automated financial scoring, historical trends, and structured analytics have been successfully generated and remain fully accessible below."
-                : "All structured data and standalone metrics below are fully available despite this error.";
+                ? "All automated financial scoring, historical trends, and structured analytics have been successfully generated and remain fully accessible."
+                : "All structured data and standalone metrics are fully available despite this error.";
             const icon = isQuota ? "⏳" : "⚠️";
 
             sumEl.innerHTML = content + `<div style="margin-top: 1rem; padding: 1.25rem; background: rgba(245,158,11,0.06); border-radius: 8px; border: 1px solid rgba(245,158,11,0.25); display: flex; gap: 14px;">
@@ -987,10 +987,10 @@ getEl('chat-form').addEventListener('submit', async (e) => {
             throw new Error(err.detail || `HTTP ${res.status}`);
         }
 
-        const reader  = res.body.getReader();
+        const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let fullText  = '';
-        let started   = false;
+        let fullText = '';
+        let started = false;
 
         while (true) {
             const { value, done } = await reader.read();
@@ -1016,7 +1016,7 @@ getEl('chat-form').addEventListener('submit', async (e) => {
                         typingBubble.querySelector('.msg-bubble').classList.add('msg-error');
                         typingBubble.querySelector('.msg-bubble').innerHTML = marked.parse(obj.error);
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
 
@@ -1085,7 +1085,7 @@ function resetToUpload() {
     getEl('excel-zone').classList.remove('active-file');
     getEl('pdf-zone').classList.remove('active-file');
     getEl('excel-label').textContent = 'Financial Data';
-    getEl('pdf-label').textContent   = 'Annual Report';
+    getEl('pdf-label').textContent = 'Annual Report';
     getEl('analyze-btn').disabled = false;
     getEl('analyze-btn-text').textContent = 'Run Analysis';
     getEl('processing-tracker').classList.add('hidden');
@@ -1094,12 +1094,12 @@ function resetToUpload() {
     getEl('rag-progress').style.width = '0%';
 
     // Clear intervals
-    if (pollInterval)    clearInterval(pollInterval);
+    if (pollInterval) clearInterval(pollInterval);
     if (ragPollInterval) clearInterval(ragPollInterval);
 
     // Reset state
-    cachedData      = null;
-    chatHistory     = [];
+    cachedData = null;
+    chatHistory = [];
     activePeriodYears = 0;
 
     // Destroy all charts
@@ -1151,17 +1151,17 @@ getEl('btn-back').addEventListener('click', async () => {
 // On page load, check if analysis data already exists (e.g., after page refresh)
 (async function init() {
     try {
-        const statusRes = await fetch('/api/status');
+        const statusRes = await fetch('/api/status', { cache: 'no-store' });
         const st = await statusRes.json();
         if (st.stage === 'done') {
-            const dataRes = await fetch('/api/analysis');
+            const dataRes = await fetch('/api/analysis', { cache: 'no-store' });
             if (dataRes.ok) {
                 cachedData = await dataRes.json();
                 // Minimal init without pipeline loading
                 const company = cachedData.company || '—';
-                const periods  = cachedData.periods || [];
-                const latest   = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
-                const scores   = cachedData.summary_scores || {};
+                const periods = cachedData.periods || [];
+                const latest = cachedData.latest_period || (periods.length ? periods[periods.length - 1] : '—');
+                const scores = cachedData.summary_scores || {};
 
                 getEl('sb-company-name').textContent = company;
                 getEl('sb-period').textContent = `Latest: ${latest}`;

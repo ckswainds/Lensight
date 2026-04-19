@@ -4,10 +4,11 @@ import json
 import logging
 from typing import Any
 
+from langsmith import traceable
+
 from llm.narrative_generator import NarrativeGenerator
+from llm.llm_router import LLMRouter
 from llm.prompt_builder import PromptBuilder
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.output_parsers import StrOutputParser
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -48,31 +49,14 @@ class LLMOrchestrator:
         logger.info("[ORCHESTRATOR] Initializing LLMOrchestrator")
         self.generator = NarrativeGenerator()
 
-        # Shared LLM for chat and summarization
-        self.chat_llm = ChatGoogleGenerativeAI(
-            model=config.LLM_MODEL,
-            temperature=0.3,
-            api_key=config.GEMINI_API_KEY,
-            streaming=True  # Ensure granular streaming is enabled
-        )
-        logger.debug(f"[ORCHESTRATOR] LLM initialized with model: {config.LLM_MODEL}")
-
-        # Grounded chat chain with LangSmith tracing
+        # Shared LLM router for chat and summarization
+        self.router = LLMRouter()
+        
+        # We only need prompts now, the router encapsulates the LLM and parser
         self.chat_prompt = PromptBuilder.build_grounded_chat_prompt()
-        self.chat_chain = (
-            self.chat_prompt
-            | self.chat_llm.with_config(run_name="grounded_chat_llm", tags=["chat", "grounded"])
-            | StrOutputParser()
-        )
-
-        # Summarization chain (for memory compression) with LangSmith tracing
         self.summarize_prompt = PromptBuilder.build_summarization_prompt()
-        self.summarize_chain = (
-            self.summarize_prompt
-            | self.chat_llm.with_config(run_name="summarization_llm", tags=["chat", "memory"])
-            | StrOutputParser()
-        )
-        logger.info("[ORCHESTRATOR] LLMOrchestrator initialized successfully with LangSmith tracing enabled")
+        
+        logger.info("[ORCHESTRATOR] LLMOrchestrator initialized successfully with router")
 
     def analyze_company(self, data: dict, rag_context: str = "") -> str:
         """Generate a full qualitative narrative report from financial data."""
@@ -90,9 +74,10 @@ class LLMOrchestrator:
             "You are a helpful financial analyst assistant answering questions based on the provided Annual Report context.\n"
             "Context: {context}\n\nQuestion: {question}"
         )
-        simple_chain = simple_prompt | self.chat_llm | StrOutputParser()
-        return simple_chain.invoke({"context": rag_context or "No context.", "question": question})
+        prompt_messages = simple_prompt.invoke({"context": rag_context or "No context.", "question": question})
+        return self.router.invoke(prompt_messages)
 
+    @traceable(run_type="chain", name="chat_grounded")
     def chat_grounded(
         self,
         question: str,
@@ -133,17 +118,15 @@ class LLMOrchestrator:
             rag_ready_flag = False
 
         try:
-            response = self.chat_chain.invoke(
-                {
-                    "company": company,
-                    "conversation_summary": conversation_summary or "No prior conversation.",
-                    "financial_summary": financial_summary,
-                    "report_status": report_status,
-                    "rag_context": rag_context if (rag_context and rag_ready_flag) else "No context available (no report uploaded).",
-                    "question": question,
-                },
-                {"run_name": "grounded_chat_flow", "tags": ["chat", "user-question"]}
-            )
+            prompt_messages = self.chat_prompt.invoke({
+                "company": company,
+                "conversation_summary": conversation_summary or "No prior conversation.",
+                "financial_summary": financial_summary,
+                "report_status": report_status,
+                "rag_context": rag_context if (rag_context and rag_ready_flag) else "No context available (no report uploaded).",
+                "question": question,
+            })
+            response = self.router.invoke(prompt_messages)
             logger.info(f"[CHAT] Response generated successfully. Length: {len(response)} chars")
         except Exception as e:
             logger.error(f"[CHAT] Error during chat_grounded: {str(e)}", exc_info=True)
@@ -162,6 +145,7 @@ class LLMOrchestrator:
         
         return response
 
+    @traceable(run_type="chain", name="chat_grounded_stream")
     def chat_grounded_stream(
         self,
         question: str,
@@ -222,7 +206,7 @@ class LLMOrchestrator:
             # Gemini often sends *incremental* pieces; some providers send *cumulative* text.
             # Old logic assumed only cumulative (len(new) > len(old)), which drops most chunks.
             logger.debug("[STREAM] Starting LLM stream (cumulative + incremental chunk handling)")
-            for chunk in self.chat_llm.stream(prompt_messages):
+            for chunk in self.router.stream(prompt_messages):
                 raw = getattr(chunk, "content", None)
                 if raw is None:
                     raw = chunk
@@ -292,7 +276,8 @@ class LLMOrchestrator:
             for m in messages
         )
         try:
-            summary = self.summarize_chain.invoke({"conversation_text": conversation_text})
+            prompt_messages = self.summarize_prompt.invoke({"conversation_text": conversation_text})
+            summary = self.router.invoke(prompt_messages)
             logger.info(f"[COMPRESS] Summary generated. Length: {len(summary)} chars")
             return summary
         except Exception as e:

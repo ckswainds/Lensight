@@ -9,12 +9,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    # LLM Settings
+    # Primary LLM Provider setting
+    PRIMARY_LLM_PROVIDER = os.getenv("PRIMARY_LLM_PROVIDER", "gemini")
+
+    # LLM Settings (Gemini / Default)
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google")
     LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+    # HuggingFace Fallback Setting
+    HF_FALLBACK_MODEL = os.getenv("HF_FALLBACK_MODEL", "meta-llama/Meta-Llama-3-8B-Instruct")
+    HF_FALLBACK_MAX_TOKENS = int(os.getenv("HF_FALLBACK_MAX_TOKENS", "1500"))
+    HF_FALLBACK_TEMPERATURE = float(os.getenv("HF_FALLBACK_TEMPERATURE", "0.3"))
     
     # RAG Settings — HuggingFace Inference API embedding model
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

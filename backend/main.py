@@ -14,6 +14,7 @@ from constants import (
     PROJECT_ROOT
 )
 from backend.pipeline_runner import start_pipeline, get_status, is_idle, flush_all_data, reset_status
+from llm.prompt_builder import PromptBuilder
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -89,69 +90,7 @@ class ChatRequest(BaseModel):
     chat_history: List[dict] = []
 
 # -----------------------------------------------------------------------------
-# Helper: Build financial summary string for LLM context
-# -----------------------------------------------------------------------------
-def _build_financial_summary(data: dict) -> str:
-    """
-    Converts analysis.json into a compact textual summary for the LLM chat prompt.
-    Extracts latest values + trends for key ratios across all categories.
-    """
-    lines = []
-    company = data.get("company", "Unknown")
-    latest = data.get("latest_period", "")
-    periods = data.get("periods", [])
-    
-    lines.append(f"Company: {company}")
-    lines.append(f"Analysis Period: {periods[0] if periods else 'N/A'} to {latest}")
-    lines.append(f"Overall Score: {data.get('summary_scores', {}).get('overall_score', 'N/A')}/5")
-    lines.append("")
 
-    # Category labels for display
-    categories = {
-        "profitability": "Profitability",
-        "valuation": "Valuation",
-        "leverage": "Leverage",
-        "liquidity": "Liquidity",
-        "efficiency": "Efficiency",
-        "per_share": "Per Share",
-    }
-
-    for cat_key, cat_label in categories.items():
-        cat_data = data.get(cat_key, {})
-        if not cat_data:
-            continue
-        lines.append(f"## {cat_label}")
-        for ratio_name, ratio_data in cat_data.items():
-            if not isinstance(ratio_data, dict):
-                continue
-            latest_val = ratio_data.get("latest_value")
-            latest_lbl = ratio_data.get("latest_label", "")
-            trend = ratio_data.get("trend", "")
-            display_name = ratio_name.replace("_", " ").title()
-            val_str = f"{latest_val:.2f}" if latest_val is not None else "N/A"
-            lines.append(f"  - {display_name}: {val_str} ({latest_lbl}) | Trend: {trend}")
-        lines.append("")
-
-    # Growth CAGRs
-    growth = data.get("growth", {})
-    if growth:
-        lines.append("## Growth (CAGR)")
-        for key, g in growth.items():
-            if isinstance(g, dict):
-                val = g.get("value")
-                lbl = g.get("label", "")
-                display = key.replace("_", " ").title()
-                val_str = f"{val:.1f}%" if val is not None else "N/A"
-                lines.append(f"  - {display}: {val_str} ({lbl})")
-        lines.append("")
-
-    # Include llm_financial_summary if it exists (could be pre-generated)
-    llm_summary = data.get("llm_financial_summary", "")
-    if llm_summary:
-        lines.append("## AI Narrative Summary")
-        lines.append(llm_summary)
-
-    return "\n".join(lines)
 
 
 # -----------------------------------------------------------------------------
@@ -187,6 +126,7 @@ async def upload_files(
     # 4. Start Pipeline
     success = start_pipeline(
         excel_filename=excel_file.filename,
+        pdf_filename=pdf_file.filename if pdf_file and pdf_file.filename else None,
         uploads_dir=DATA_UPLOADS_DIR,
         raw_dir=DATA_RAW_DIR,
         processed_dir=DATA_PROCESSED_DIR,
@@ -235,7 +175,11 @@ async def chat_endpoint(req: ChatRequest):
     if analysis_file.exists():
         with open(analysis_file, "r") as f:
             data = json.load(f)
-            financial_summary = _build_financial_summary(data)
+            financial_summary = PromptBuilder.build_financial_summary_text(data)
+            # Include narrative if available since chat needs to know the report
+            llm_summary = data.get("llm_financial_summary", "")
+            if llm_summary:
+                financial_summary += f"\n## AI Narrative Summary\n{llm_summary}\n"
             # Fallback company name from analysis if pipeline status doesn't have it
             if company_name == "Unknown Company":
                 company_name = data.get("company", "Unknown Company")
