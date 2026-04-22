@@ -60,7 +60,13 @@ class Embedder:
             except ImportError:
                 logger.debug("[EMBEDDER] langchain_huggingface not installed, falling back to langchain_community")
                 from langchain_community.embeddings import HuggingFaceEmbeddings
-            self.embeddings = HuggingFaceEmbeddings(model_name=model_name)
+
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=model_name,
+                # Prevent network calls if model is already cached locally
+                model_kwargs={"local_files_only": False},   # try cache first, download if missing
+                encode_kwargs={"normalize_embeddings": True},
+            )
             logger.info("[EMBEDDER] HuggingFace embedder ready")
         except Exception as e:
             logger.error("[EMBEDDER] Failed to initialize HuggingFace embeddings: %s", e)

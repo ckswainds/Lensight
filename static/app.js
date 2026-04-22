@@ -349,7 +349,10 @@ async function loadDashboard(statusData) {
 
     // RAG and Summary status — pass full status object so panels reflect real state
     updateRagState(statusData || { rag_status: 'idle', rag_progress: 0, rag_label: '' });
-    updateSummaryState(statusData || { summary_status: 'idle' });
+    // await so the spinner/error UI renders before polling starts
+    await updateSummaryState(statusData || { summary_status: 'idle' });
+    // Always start background polling after a fresh pipeline run so we catch
+    // the summary thread completing (it starts slightly after Stage.DONE is set).
     pollBackgroundTasks();
 
     // Navigate to overview by default
@@ -873,6 +876,12 @@ function updateRagBadge(ragStatus) {
 
 function pollBackgroundTasks() {
     if (ragPollInterval) clearInterval(ragPollInterval);
+    ragPollInterval = null;
+
+    // Safety: stop after 5 minutes (150 polls × 2 s) no matter what.
+    let pollCount = 0;
+    const MAX_POLLS = 150;
+
     ragPollInterval = setInterval(async () => {
         try {
             const res = await fetch('/api/status', { cache: 'no-store' });
@@ -880,12 +889,23 @@ function pollBackgroundTasks() {
             updateRagState(st);
             await updateSummaryState(st);
 
-            // Terminal states
+            pollCount++;
+
+            // RAG: idle (no PDF), ready, or error are all terminal.
             const ragDone = ['ready', 'error', 'idle'].includes(st.rag_status);
-            const sumDone = ['ready', 'error', 'idle'].includes(st.summary_status || 'idle');
+
+            // IMPORTANT: 'idle' is NOT a terminal state for summary here.
+            // When Stage.DONE is first set by the pipeline, the summary background
+            // thread hasn't started yet — so summary_status is still 'idle'.
+            // If we stopped on 'idle', polling would quit before the thread ever
+            // set status to 'generating', and the summary would never appear.
+            // We only stop once we get a definitive 'ready' or 'error' signal,
+            // OR after the safety timeout.
+            const sumDone = ['ready', 'error'].includes(st.summary_status) || pollCount >= MAX_POLLS;
 
             if (ragDone && sumDone) {
                 clearInterval(ragPollInterval);
+                ragPollInterval = null;
             }
         } catch (_) { }
     }, 2000);
@@ -895,18 +915,23 @@ function pollBackgroundTasks() {
 async function updateSummaryState(st) {
     const status = st.summary_status || 'idle';
 
-    // If it's ready, but we don't have the text cached yet, fetch it.
-    if (status === 'ready' && cachedData && !cachedData.llm_financial_summary) {
-        try {
-            const res = await fetch('/api/analysis', { cache: 'no-store' });
-            if (res.ok) {
-                const fresh = await res.json();
-                if (fresh.llm_financial_summary) {
-                    cachedData.llm_financial_summary = fresh.llm_financial_summary;
-                    if (currentPage === 'overview') renderOverview();
+    // If summary is ready, always re-fetch from server to get the latest text.
+    // We can't just check cachedData because it may have been fetched before the
+    // summary was written to analysis.json (that's exactly the race condition bug).
+    if (status === 'ready') {
+        // Only fetch & re-render if we don't already have the summary text
+        if (cachedData && !cachedData.llm_financial_summary) {
+            try {
+                const res = await fetch('/api/analysis', { cache: 'no-store' });
+                if (res.ok) {
+                    const fresh = await res.json();
+                    if (fresh.llm_financial_summary) {
+                        cachedData.llm_financial_summary = fresh.llm_financial_summary;
+                        if (currentPage === 'overview') renderOverview();
+                    }
                 }
-            }
-        } catch (_) { }
+            } catch (_) { }
+        }
         return;
     }
 
@@ -1187,6 +1212,21 @@ getEl('btn-back').addEventListener('click', async () => {
                 renderOverview();
                 renderAnalysis();
                 updateRagState(st);   // full object → correct panel shown on refresh
+
+                // ── KEY FIX: always apply current summary state and start background
+                // polling so the AI summary appears automatically without a page refresh.
+                // Previously, init() never called pollBackgroundTasks(), so if the summary
+                // was still generating (or just finished) when the page loaded, nothing
+                // would detect its completion and update the UI.
+                await updateSummaryState(st);
+
+                // If summary or RAG is still in progress, keep polling until done
+                const sumDone = ['ready', 'error', 'idle'].includes(st.summary_status || 'idle');
+                const ragDone = ['ready', 'error', 'idle'].includes(st.rag_status || 'idle');
+                if (!sumDone || !ragDone) {
+                    pollBackgroundTasks();
+                }
+
                 navigateTo('overview');
             }
         }

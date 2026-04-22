@@ -42,3 +42,13 @@ template.py
 # Readmes and markdown files (not required in production)
 INTERVIEW_NOTES.md
 project_notes.md
+EVALUATION_RESULTS.md
+
+# Evaluation scripts and results (research/dev only, not production)
+/eval_rag.py
+/eval_rag_lite.py
+/results/
+/scratch/
+
+# Data directory (runtime data, never committed)
+/data/
