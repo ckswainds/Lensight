@@ -20,20 +20,10 @@ template.py
 # Virtual Environments
 .venv/
 
-# Local diagnostic/test scripts not required in production
-/test_apis.py
-/test_llm.py
-/test_markdown_rendering.py
-/test_parallel_check.py
-/test_parallel_chunking.py
-/test_query_analyzer.py
-/test_streaming_diagnostic.py
-/test_extra_stats.py
-/test_fallback.py
-/test_hf_and_fallback.py
-/test_hf_quality.py
-/test_inference.py
-/test_stats.py
+# Test files and directories
+test_*.py
+tests/
+demo_token_reduction.py
 
 # Stats output files
 /extra_stats_output.txt
