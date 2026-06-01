@@ -1,4 +1,15 @@
+---
+title: Lensight AI
+emoji: 📈
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Lensight
+
 
 > **AI-Powered Fundamental Analysis Platform for Financial Intelligence**
 
