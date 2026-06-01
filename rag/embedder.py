@@ -1,13 +1,14 @@
-"""Embedder: text -> vector conversion.
+"""Embedder: text → vector conversion.
 
 Auto-detects the correct backend from EMBEDDING_MODEL in .env:
   - Google models  : any name starting with 'models/' or containing 'text-embedding'
-                     e.g. 'models/text-embedding-004'  -> GoogleGenerativeAIEmbeddings
+                     e.g. 'models/text-embedding-004'  → GoogleGenerativeAIEmbeddings
   - HuggingFace    : everything else
-                     e.g. 'sentence-transformers/all-MiniLM-L6-v2' -> HuggingFaceEmbeddings
+                     e.g. 'sentence-transformers/all-MiniLM-L6-v2' → HuggingFaceEmbeddings
 
-Override via .env:  EMBEDDING_MODEL=models/text-embedding-004   (Google)
-                    EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2  (HuggingFace)
+Override via .env:
+    EMBEDDING_MODEL=models/text-embedding-004
+    EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 """
 
 import logging
@@ -23,16 +24,15 @@ def _is_google_model(model_name: str) -> bool:
 
 
 class Embedder:
-    """Provides the embedding model configured in .env.
-
+    """
+    Provides the embedding model configured in .env.
     Automatically routes to Google Generative AI or HuggingFace depending on
     the value of EMBEDDING_MODEL.
     """
 
     def __init__(self, batch_size: int = 10, num_workers: int = 4):
         model_name = config.EMBEDDING_MODEL
-        logger.info("[EMBEDDER] Initializing embedder")
-        logger.info("[EMBEDDER] EMBEDDING_MODEL = %s", model_name)
+        logger.info("Initializing embedder with model: %s", model_name)
 
         if _is_google_model(model_name):
             self._init_google(model_name)
@@ -40,36 +40,35 @@ class Embedder:
             self._init_huggingface(model_name)
 
     def _init_google(self, model_name: str) -> None:
-        logger.info("[EMBEDDER] Backend: Google Generative AI")
+        logger.info("Embedder backend: Google Generative AI")
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             self.embeddings = GoogleGenerativeAIEmbeddings(
                 model=model_name,
                 google_api_key=config.GEMINI_API_KEY,
             )
-            logger.info("[EMBEDDER] Google embedder ready")
+            logger.info("Google embedder ready")
         except Exception as e:
-            logger.error("[EMBEDDER] Failed to initialize Google embeddings: %s", e)
+            logger.error("Failed to initialize Google embeddings: %s", e)
             raise
 
     def _init_huggingface(self, model_name: str) -> None:
-        logger.info("[EMBEDDER] Backend: HuggingFace (local)")
+        logger.info("Embedder backend: HuggingFace (local)")
         try:
             try:
                 from langchain_huggingface import HuggingFaceEmbeddings
             except ImportError:
-                logger.debug("[EMBEDDER] langchain_huggingface not installed, falling back to langchain_community")
+                logger.debug("langchain_huggingface not installed, falling back to langchain_community")
                 from langchain_community.embeddings import HuggingFaceEmbeddings
 
             self.embeddings = HuggingFaceEmbeddings(
                 model_name=model_name,
-                # Prevent network calls if model is already cached locally
-                model_kwargs={"local_files_only": False},   # try cache first, download if missing
+                model_kwargs={"local_files_only": False},
                 encode_kwargs={"normalize_embeddings": True},
             )
-            logger.info("[EMBEDDER] HuggingFace embedder ready")
+            logger.info("HuggingFace embedder ready")
         except Exception as e:
-            logger.error("[EMBEDDER] Failed to initialize HuggingFace embeddings: %s", e)
+            logger.error("Failed to initialize HuggingFace embeddings: %s", e)
             raise
 
     def get_embeddings_model(self):

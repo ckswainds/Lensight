@@ -962,7 +962,7 @@ async function updateSummaryState(st) {
                 icon = "⏱️";
             } else if (err === 'config_missing') {
                 errorMsg = "<b>Configuration Missing.</b> Required API keys (Gemini or HuggingFace) are not configured in the environment.";
-                helpText = "Please ensure GEMINI_API_KEY and HUGGINGFACEHUB_API_TOKEN are set as Secrets in your HuggingFace Space Settings.";
+                helpText = "Please ensure GEMINI_API_KEY and HUGGINGFACEHUB_API_TOKEN are set in your environment variables or application configuration.";
                 icon = "🔑";
             }
 

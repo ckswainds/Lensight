@@ -16,20 +16,12 @@ from constants import (
 from backend.pipeline_runner import start_pipeline, get_status, is_idle, flush_all_data, reset_status
 from llm.prompt_builder import PromptBuilder
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Error Classification Helper
-# ---------------------------------------------------------------------------
-
 def _classify_llm_error(e: Exception) -> str:
-    """
-    Convert raw LLM/API exceptions into professional, user-facing markdown messages.
-    Inspects the error string for known patterns (quota, timeout, auth, etc.).
-    """
+    """Convert raw LLM exceptions into user-facing markdown messages."""
     s = str(e)
     sl = s.lower()
 
@@ -70,9 +62,9 @@ def _classify_llm_error(e: Exception) -> str:
         "Please try again in a moment."
     )
 
+
 app = FastAPI(title="Lensight AI Backend")
 
-# CORS setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -81,49 +73,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------------------------------------------------------
-# Models
-# -----------------------------------------------------------------------------
+
 class ChatRequest(BaseModel):
     question: str
     conversation_summary: str = ""
     chat_history: List[dict] = []
 
-# -----------------------------------------------------------------------------
-
-
-
-# -----------------------------------------------------------------------------
-# Routes
-# -----------------------------------------------------------------------------
 
 @app.post("/api/upload")
 async def upload_files(
     excel_file: UploadFile = File(...),
     pdf_file: Optional[UploadFile] = File(None)
 ):
-    """
-    Accepts Excel + Optional PDF.
-    Saves to /data/uploads/ and triggers the background pipeline.
-    """
+    """Accept Excel + optional PDF, save to uploads/, and trigger the background pipeline."""
     if not is_idle():
         raise HTTPException(status_code=400, detail="Pipeline is currently running.")
-    
-    # 1. Flush old uploads manually first
+
     flush_all_data(DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR)
-    
-    # 2. Save Excel
+
     excel_path = DATA_UPLOADS_DIR / excel_file.filename
     with open(excel_path, "wb") as f:
         f.write(await excel_file.read())
-        
-    # 3. Save PDF if attached
+
     if pdf_file and pdf_file.filename:
         pdf_path = DATA_UPLOADS_DIR / pdf_file.filename
         with open(pdf_path, "wb") as f:
             f.write(await pdf_file.read())
-            
-    # 4. Start Pipeline
+
     success = start_pipeline(
         excel_filename=excel_file.filename,
         pdf_filename=pdf_file.filename if pdf_file and pdf_file.filename else None,
@@ -131,73 +107,70 @@ async def upload_files(
         raw_dir=DATA_RAW_DIR,
         processed_dir=DATA_PROCESSED_DIR,
     )
-    
+
     if not success:
         raise HTTPException(status_code=500, detail="Failed to start pipeline.")
-        
+
     return {"status": "started", "message": "Pipeline started successfully"}
+
 
 @app.post("/api/reset")
 async def reset_analysis():
-    """Resets the pipeline state and flushes old data, clearing the session."""
+    """Reset pipeline state and flush all data."""
     reset_status()
     flush_all_data(DATA_UPLOADS_DIR, DATA_RAW_DIR, DATA_PROCESSED_DIR)
     return {"status": "reset"}
 
+
 @app.get("/api/status")
 async def pipeline_status():
-    """Returns the current pipeline status."""
+    """Return the current pipeline status."""
     return get_status()
+
 
 @app.get("/api/analysis")
 async def get_analysis():
-    """Returns the generated analysis.json if ready."""
+    """Return analysis.json if ready."""
     analysis_file = DATA_PROCESSED_DIR / "analysis.json"
     if not analysis_file.exists():
         raise HTTPException(status_code=404, detail="Analysis results not found.")
-        
+
     with open(analysis_file, "r") as f:
         data = json.load(f)
     return data
 
+
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
-    """
-    Streams a response from the LLM based on RAG context and financial data.
-    """
+    """Stream a grounded LLM response based on financial data and RAG context."""
     st = get_status()
     rag_status_raw = st.get("rag_status", "idle")
     company_name = st.get("company", "Unknown Company")
-    
-    # 1. Load Financial Summary (build a rich text representation for the LLM)
+
     analysis_file = DATA_PROCESSED_DIR / "analysis.json"
     financial_summary = ""
     if analysis_file.exists():
         with open(analysis_file, "r") as f:
             data = json.load(f)
             financial_summary = PromptBuilder.build_financial_summary_text(data)
-            # Include narrative if available since chat needs to know the report
             llm_summary = data.get("llm_financial_summary", "")
             if llm_summary:
                 financial_summary += f"\n## AI Narrative Summary\n{llm_summary}\n"
-            # Fallback company name from analysis if pipeline status doesn't have it
             if company_name == "Unknown Company":
                 company_name = data.get("company", "Unknown Company")
 
-    # 2. Retrieve RAG text (lazy import to avoid loading models globally)
     rag_context = ""
     try:
         if rag_status_raw == "ready":
             from rag.retriever import RAGRetriever
             rag_context = RAGRetriever().retrieve_context(req.question)
     except Exception as exc:
-        logger.warning(f"RAG retrieval failed: {exc}")
+        logger.warning("RAG retrieval failed: %s", exc)
 
-    # 3. Stream Generator
     async def event_generator():
         from llm.orchestrator import LLMOrchestrator
         orchestrator = LLMOrchestrator()
-        
+
         try:
             for chunk in orchestrator.chat_grounded_stream(
                 question=req.question,
@@ -210,13 +183,13 @@ async def chat_endpoint(req: ChatRequest):
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
                 await asyncio.sleep(0)
         except Exception as e:
-            logger.error(f"Chat streaming error: {e}", exc_info=True)
+            logger.error("Chat streaming error: %s", e, exc_info=True)
             friendly_msg = _classify_llm_error(e)
             yield f"data: {json.dumps({'error': friendly_msg})}\n\n"
-            
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-# Mount Static Files (Frontend UI)
+
 app.mount("/", StaticFiles(directory=str(PROJECT_ROOT / "static"), html=True), name="static")

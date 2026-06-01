@@ -1,13 +1,3 @@
----
-title: Lensight AI
-emoji: 📈
-colorFrom: blue
-colorTo: green
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Lensight
 
 > **AI-Powered Fundamental Analysis Platform for Financial Intelligence**
@@ -417,18 +407,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Made with ❤️ for financial professionals who demand intelligence and accuracy.**
-
-### Status: Production Ready ✅
-
-- [x] Core analytics pipeline
-- [x] RAG integration
-- [x] Chat interface
-- [x] Dashboard UI
-- [x] API endpoints
-- [x] LangSmith tracing
-- [x] Error handling
-- [x] Documentation
-
----
-
-*Last Updated: April 2026*

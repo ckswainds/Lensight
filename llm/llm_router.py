@@ -5,6 +5,7 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+
 class LLMRouter:
     """
     Routes LLM calls to the primary provider.
@@ -16,25 +17,22 @@ class LLMRouter:
     ]
 
     def __init__(self):
-        logger.info(f"[ROUTER] Initializing Router. Primary provider: {config.PRIMARY_LLM_PROVIDER}")
-        
-        # Lazy imports to avoid circular dependencies
+        logger.info("Initializing LLMRouter. Primary: %s", config.PRIMARY_LLM_PROVIDER)
+
         from llm.providers.gemini_provider import GeminiProvider
         from llm.providers.huggingface_provider import HuggingFaceProvider
-        
-        # Instantiate both blocks
+
         gemini = GeminiProvider()
         hf = HuggingFaceProvider()
-        
-        # Swap primary/fallback based on config
+
         if config.PRIMARY_LLM_PROVIDER.lower() == "huggingface":
             self.primary = hf
             self.fallback = gemini
-            logger.info("[ROUTER] Set to HuggingFace Primary, Gemini Fallback")
+            logger.info("Route: HuggingFace → Gemini fallback")
         else:
             self.primary = gemini
             self.fallback = hf
-            logger.info("[ROUTER] Set to Gemini Primary, HuggingFace Fallback")
+            logger.info("Route: Gemini → HuggingFace fallback")
 
     def _is_transient(self, e: Exception) -> bool:
         s = str(e).lower()
@@ -45,10 +43,10 @@ class LLMRouter:
             yield from self.primary.stream(prompt_messages)
         except Exception as e:
             if self._is_transient(e):
-                logger.warning("[ROUTER] Primary failed (%s: %s) → switching to fallback", type(e).__name__, e)
+                logger.warning("Primary failed (%s: %s) — switching to fallback", type(e).__name__, e)
                 yield from self.fallback.stream(prompt_messages)
             else:
-                logger.error("[ROUTER] Primary failed with non-transient error: %s", e)
+                logger.error("Primary failed with non-transient error: %s", e)
                 raise
 
     def invoke(self, prompt_messages) -> str:
@@ -56,8 +54,8 @@ class LLMRouter:
             return self.primary.invoke(prompt_messages)
         except Exception as e:
             if self._is_transient(e):
-                logger.warning("[ROUTER] Primary failed (%s: %s) → switching to fallback", type(e).__name__, e)
+                logger.warning("Primary failed (%s: %s) — switching to fallback", type(e).__name__, e)
                 return self.fallback.invoke(prompt_messages)
             else:
-                logger.error("[ROUTER] Primary failed with non-transient error: %s", e)
+                logger.error("Primary failed with non-transient error: %s", e)
                 raise

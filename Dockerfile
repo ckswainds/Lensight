@@ -1,7 +1,7 @@
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
-# Create a user with UID 1000 (Required by Hugging Face Spaces)
+# Create a non-root user with UID 1000 for security
 RUN useradd -m -u 1000 user
 
 # Set environment variables
@@ -34,7 +34,7 @@ RUN mkdir -p /home/user/app/data/uploads \
              /home/user/app/data/vector_store \
              /home/user/app/logs
 
-# Expose the standard port Hugging Face looks for
+# Expose the application port
 EXPOSE 7860
 
 # Start Uvicorn

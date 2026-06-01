@@ -48,9 +48,6 @@ import openpyxl
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Public dataclass – returned by ExcelParser.parse_all()
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ParseResult:
@@ -68,17 +65,9 @@ class ParseResult:
         return len(self.errors) == 0
 
 
-# ---------------------------------------------------------------------------
-# Custom exception
-# ---------------------------------------------------------------------------
-
 class ExcelParserError(Exception):
     """Raised when the workbook cannot be parsed."""
 
-
-# ---------------------------------------------------------------------------
-# Row-range configuration  (1-based, inclusive on both ends)
-# ---------------------------------------------------------------------------
 
 _SHEET          = "Data Sheet"
 _ROW_COMPANY    = 1
@@ -89,17 +78,12 @@ _ROW_HIST_PRICE = 90
 _ROW_ADJ_SHARES = 93
 
 _BLOCKS: dict[str, tuple[int, int]] = {
-    # statement_name: (header_row, last_data_row)
     "pnl":           (16, 31),
     "quarters":      (41, 50),
     "balance_sheet": (56, 72),
     "cash_flow":     (81, 85),
 }
 
-
-# ---------------------------------------------------------------------------
-# Main parser class
-# ---------------------------------------------------------------------------
 
 class ExcelParser:
     """
@@ -133,12 +117,7 @@ class ExcelParser:
         self._src  = Path(xlsx_path)
         self._dest = Path(raw_dir)
         self._rows: list[tuple[Any, ...]] = []
-
         self._validate_inputs()
-
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
 
     def parse_all(self) -> ParseResult:
         """
@@ -180,14 +159,8 @@ class ExcelParser:
         result.balance_sheet = self._write_block("balance_sheet")
         result.cash_flow     = self._write_block("cash_flow")
 
-        logger.info(
-            "Parse complete — 5 CSVs written to '%s'", self._dest
-        )
+        logger.info("Parse complete — 5 CSVs written to '%s'", self._dest)
         return result
-
-    # ------------------------------------------------------------------
-    # Workbook loading
-    # ------------------------------------------------------------------
 
     def _load_sheet(self) -> None:
         """
@@ -219,13 +192,7 @@ class ExcelParser:
         self._rows = [tuple(row) for row in ws.iter_rows(values_only=True)]
         wb.close()
 
-        logger.debug(
-            "Cached %d rows from '%s'", len(self._rows), _SHEET
-        )
-
-    # ------------------------------------------------------------------
-    # Meta extraction
-    # ------------------------------------------------------------------
+        logger.debug("Cached %d rows from '%s'", len(self._rows), _SHEET)
 
     def _write_meta(self) -> Path:
         """
@@ -241,7 +208,6 @@ class ExcelParser:
         hist_prices = self._value_row(_ROW_HIST_PRICE)
         adj_shares  = self._value_row(_ROW_ADJ_SHARES)
 
-        # Col-0 (1-based: col=1) is the row label; col-1 (1-based: col=2) is the value
         scalar_rows: list[dict[str, Any]] = [
             {"field": "company_name",      "value": self._cell(_ROW_COMPANY, 2)},
             {"field": "face_value",        "value": self._cell(_ROW_FACE_VALUE, 2)},
@@ -249,7 +215,6 @@ class ExcelParser:
             {"field": "market_cap_cr",     "value": self._cell(_ROW_MARKET_CAP, 2)},
         ]
 
-        # Append one row per year for price and adjusted shares
         for date_label, price, shares in zip(price_dates, hist_prices, adj_shares):
             scalar_rows.append({
                 "field": f"hist_price_{date_label}",
@@ -264,10 +229,6 @@ class ExcelParser:
         self._write_csv(out, fieldnames=["field", "value"], rows=scalar_rows)
         logger.info("meta.csv  → %d fields", len(scalar_rows))
         return out
-
-    # ------------------------------------------------------------------
-    # Generic block writer
-    # ------------------------------------------------------------------
 
     def _write_block(self, name: str) -> Path:
         """
@@ -289,10 +250,7 @@ class ExcelParser:
             Path of the written CSV file.
         """
         header_row, last_row = _BLOCKS[name]
-        logger.debug(
-            "Extracting block '%s' (rows %d–%d)...",
-            name, header_row, last_row,
-        )
+        logger.debug("Extracting block '%s' (rows %d–%d)...", name, header_row, last_row)
 
         date_labels = self._date_header_row(header_row)
         if not date_labels:
@@ -307,14 +265,13 @@ class ExcelParser:
         for row_idx in range(header_row + 1, last_row + 1):
             raw = self._raw_row(row_idx)
             if raw is None or not any(v is not None for v in raw):
-                continue   # skip fully empty rows silently
+                continue
 
             metric = raw[0]
             if metric is None:
                 continue
 
             values = list(raw[1 : len(date_labels) + 1])
-            # Pad with None if fewer values than headers
             values += [None] * (len(date_labels) - len(values))
 
             row_dict: dict[str, Any] = {"metric": str(metric).strip()}
@@ -336,10 +293,6 @@ class ExcelParser:
         )
         return out
 
-    # ------------------------------------------------------------------
-    # Low-level helpers
-    # ------------------------------------------------------------------
-
     def _raw_row(self, row_num: int) -> tuple[Any, ...] | None:
         """Return the raw tuple for a 1-based row index, or None."""
         idx = row_num - 1
@@ -357,8 +310,8 @@ class ExcelParser:
     def _date_header_row(self, row_num: int) -> list[str]:
         """
         Read the period header row and return a list of formatted
-        date strings (e.g. "Mar-2016").  The first column is the
-        metric-name column and is skipped.
+        date strings (e.g. "Mar-2016"). The first column (metric name)
+        is skipped.
         """
         raw = self._raw_row(row_num)
         if raw is None:
@@ -375,17 +328,11 @@ class ExcelParser:
         return labels
 
     def _value_row(self, row_num: int) -> list[Any]:
-        """
-        Return all non-label values from a row (skips col-0).
-        """
+        """Return all non-label values from a row (skips col-0)."""
         raw = self._raw_row(row_num)
         if raw is None:
             return []
         return list(raw[1:])
-
-    # ------------------------------------------------------------------
-    # CSV writer
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _write_csv(
@@ -414,10 +361,6 @@ class ExcelParser:
             raise ExcelParserError(
                 f"Failed to write '{path}': {exc}"
             ) from exc
-
-    # ------------------------------------------------------------------
-    # Input validation
-    # ------------------------------------------------------------------
 
     def _validate_inputs(self) -> None:
         if not self._src.exists():
